@@ -1,0 +1,55 @@
+---
+title: "Quickstart"
+description: "Get up and running with AgentScope v2.0 in minutes"
+---
+
+## Installation
+
+AgentScope requires Python 3.11+, and you can install it from PyPI or from source.
+
+It's recommended to install AgentScope by using [uv]().
+
+### From PyPI
+
+```bash
+uv pip install agentscope
+```
+
+### From Source
+
+```bash
+git clone -b main https://github.com/agentscope-ai/agentscope
+cd agentscope
+uv pip install -e .
+```
+
+### Verify Installation
+
+To ensure AgentScope is installed successfully, check via executing the following code:
+
+```python
+import agentscope
+
+print(agentscope.__version__)
+```
+
+## Extra Dependencies
+
+To satisfy the requirements of different functionalities, AgentScope provides extra dependencies that can be installed based on your needs.
+
+- **full**: including extra dependencies for model APIs, tool functions and more.
+- **dev**: development dependencies, including testing and documentation tools.
+
+For example, when installing the full dependencies, the installation command varies depending on your operating system.
+
+- For Windows users:
+
+```bash
+uv pip install agentscope[full]
+```
+
+- For Mac and Linux users:
+
+```bash
+uv pip install agentscope\[full\]
+```
