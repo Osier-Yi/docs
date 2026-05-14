@@ -1,0 +1,15 @@
+---
+title: "Message & Event"
+description: "The core abstractions of AgentScope"
+---
+
+Message (`Msg`) is the basic structure in AgentScope, responsible for storing and exchange information between **agents**.
+
+Its basic structure includes:
+
+| Field | Description |
+| ---- | ---- |
+| `id` | Unique identifier for the message |
+| `role` | The role of the message sender, e.g. `user`, `agent` |
+| `content` | The content of the message, which can be a string or a structured object |
+| `metadata` | Additional information about the message, such as timestamp, tool calls, etc. |

@@ -9,86 +9,134 @@
   },
   "favicon": "logo/agentscope.svg",
   "navigation": {
-    "tabs": [
+    "versions": [
       {
-        "tab": "Guides",
-        "groups": [
+        "version": "2.0",
+        "tabs": [
           {
-            "group": "Get Started",
-            "pages": [
-              "index",
-              "quickstart"
+            "tab": "Guides",
+            "groups": [
+              {
+                "group": "Get Started",
+                "pages": [
+                  "v2/index",
+                  "v2/quickstart"
+                ]
+              },
+              {
+                "group": "Building Blocks",
+                "pages": [
+                  "v2/building-blocks/message-and-event",
+                  "v2/building-blocks/agent",
+                  "v2/building-blocks/model",
+                  "v2/building-blocks/context",
+                  "v2/building-blocks/tool",
+                  "v2/building-blocks/permission-system",
+                  "v2/building-blocks/middleware",
+                  "v2/building-blocks/workspace"
+                ]
+              },
+              {
+                "group": "Deploy",
+                "pages": [
+                  "v2/deploy/agent-service",
+                  "v2/deploy/sandbox"
+                ]
+              },
+              {
+                "group": "Others",
+                "pages": [
+                  "v2/others/faq"
+                ]
+              }
             ]
-          },
+          }
+        ]
+      },
+      {
+        "version": "1.0",
+        "tabs": [
           {
-            "group": "Tutorial",
-            "pages": [
-              "tutorial/tutorial_research_agent",
-              "tutorial/tutorial_sales_agent"
-            ]
-          },
-          {
-            "group": "Out-of-box Agents",
-            "pages": [
-              "out-of-box-agents/alias",
-              "out-of-box-agents/browser-use",
-              "out-of-box-agents/deep-research",
-              "out-of-box-agents/alias-finance",
-              "out-of-box-agents/data-science",
-              "out-of-box-agents/datajuicer-agent",
-              "out-of-box-agents/evo-trader"
-            ]
-          },
-          {
-            "group": "Basic Concepts",
-            "pages": [
-              "basic-concepts/msg",
-              "basic-concepts/agent",
-              "basic-concepts/model",
-              "basic-concepts/context-and-memory",
-              "basic-concepts/tool"
-            ]
-          },
-          {
-            "group": "Building Blocks",
-            "pages": [
-              "building-blocks/agent",
-              "building-blocks/models",
-              "building-blocks/context-and-memory",
-              "building-blocks/rag",
-              "building-blocks/tool-capabilities",
-              "building-blocks/hooking-functions",
-              "building-blocks/orchestration"
-            ]
-          },
-          {
-            "group": "Observe & Evaluate",
-            "pages": [
-              "observe-and-evaluate/observability",
-              "observe-and-evaluate/evaluation"
-            ]
-          },
-          {
-            "group": "Tune Agent",
-            "pages": [
-              "tune-agent/tune-your-first-agent",
-              "tune-agent/model-selection-tuning",
-              "tune-agent/prompt-tuning",
-              "tune-agent/model-weights-tuning",
-              "tune-agent/tune-multi-agents"
-            ]
-          },
-          {
-            "group": "Deploy & Serve",
-            "pages": [
-              "deploy-and-serve/agent-as-service",
-              "deploy-and-serve/sandbox-and-tool"
-            ]
-          },
-          {
-            "group": "Others",
-            "pages": [
-              "others/faq"
+            "tab": "Guides",
+            "groups": [
+              {
+                "group": "Get Started",
+                "pages": [
+                  "v1/index",
+                  "v1/quickstart"
+                ]
+              },
+              {
+                "group": "Tutorial",
+                "pages": [
+                  "v1/tutorial/tutorial_research_agent",
+                  "v1/tutorial/tutorial_sales_agent"
+                ]
+              },
+              {
+                "group": "Out-of-box Agents",
+                "pages": [
+                  "v1/out-of-box-agents/alias",
+                  "v1/out-of-box-agents/browser-use",
+                  "v1/out-of-box-agents/deep-research",
+                  "v1/out-of-box-agents/alias-finance",
+                  "v1/out-of-box-agents/data-science",
+                  "v1/out-of-box-agents/datajuicer-agent",
+                  "v1/out-of-box-agents/evo-trader"
+                ]
+              },
+              {
+                "group": "Basic Concepts",
+                "pages": [
+                  "v1/basic-concepts/msg",
+                  "v1/basic-concepts/agent",
+                  "v1/basic-concepts/model",
+                  "v1/basic-concepts/context-and-memory",
+                  "v1/basic-concepts/tool"
+                ]
+              },
+              {
+                "group": "Building Blocks",
+                "pages": [
+                  "v1/building-blocks/agent",
+                  "v1/building-blocks/models",
+                  "v1/building-blocks/context-and-memory",
+                  "v1/building-blocks/rag",
+                  "v1/building-blocks/tool-capabilities",
+                  "v1/building-blocks/hooking-functions",
+                  "v1/building-blocks/orchestration"
+                ]
+              },
+              {
+                "group": "Observe & Evaluate",
+                "pages": [
+                  "v1/observe-and-evaluate/observability",
+                  "v1/observe-and-evaluate/evaluation"
+                ]
+              },
+              {
+                "group": "Tune Agent",
+                "pages": [
+                  "v1/tune-agent/tune-your-first-agent",
+                  "v1/tune-agent/model-selection-tuning",
+                  "v1/tune-agent/prompt-tuning",
+                  "v1/tune-agent/model-weights-tuning",
+                  "v1/tune-agent/tune-multi-agents"
+                ]
+              },
+              {
+                "group": "Deploy & Serve",
+                "pages": [
+                  "v1/deploy-and-serve/agent-as-service",
+                  "v1/deploy-and-serve/sandbox-and-tool"
+                ]
+              },
+              {
+                "group": "Others",
+                "pages": [
+                  "v1/others/faq"
+                ]
+              }
             ]
           }
         ]
@@ -111,7 +159,7 @@
         {
           "language": "en",
           "default": true,
-          "href": "/"
+          "href": "/",
         }
       ]
     }
