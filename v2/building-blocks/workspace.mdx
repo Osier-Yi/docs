@@ -361,7 +361,7 @@ await workspace.remove_skill("Web Search")
 
 ### How Skill Discovery Works (LocalWorkspace)
 
-`LocalWorkspace` discovers skills by directly scanning the `skills/` directory — no index file is needed:
+`LocalWorkspace` discovers skills by scanning the `skills/` directory:
 
 1. **Directory scanning** — `list_skills()` reads all subdirectories, loads each `SKILL.md`, and returns valid skills
 2. **Content-hash deduplication** — on `add_skill()`, a SHA-256 hash of the `SKILL.md` content is compared against existing skills; duplicates are silently skipped
