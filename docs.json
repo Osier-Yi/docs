@@ -39,8 +39,7 @@
               {
                 "group": "Deploy",
                 "pages": [
-                  "v2/deploy/agent-service",
-                  "v2/deploy/sandbox"
+                  "v2/deploy/agent-service"
                 ]
               },
               {
