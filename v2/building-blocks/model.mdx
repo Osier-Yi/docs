@@ -2,3 +2,387 @@
 title: "Model"
 description: "Configure and connect LLM model providers in AgentScope"
 ---
+
+This page covers detailed usage examples and provider-specific references for each model class in AgentScope.
+
+For details on `Msg` and content blocks, see the [Message & Event](/v2/building-blocks/message-and-event) section.
+
+## ChatModel
+
+### Basic Usage
+
+All chat model classes share a unified `__call__` interface. The input to `__call__` is a list of `Msg` objects. Each model internally holds a formatter and handles the conversion from `Msg` to the provider-specific message format.
+
+The method signature is as follows:
+
+```python
+async def __call__(
+    self,
+    messages: list[Msg],
+    tools: list[dict] | None = None,
+    tool_choice: ToolChoice | None = None,
+    **kwargs: Any,
+) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+```
+
+<ParamField path="messages" type="list[Msg]" required>
+  A list of `Msg` objects representing the conversation history.
+</ParamField>
+
+<ParamField path="tools" type="list[dict] | None">
+  Optional list of tool schemas in JSON Schema format.
+</ParamField>
+
+<ParamField path="tool_choice" type="ToolChoice | None">
+  Controls tool invocation behavior (`auto`, `none`, `required`, or a specific tool name).
+</ParamField>
+
+The method returns a `ChatResponse` when `stream=False`, or an `AsyncGenerator[ChatResponse, None]` when `stream=True`.
+
+The following example demonstrates a typical workflow for calling a model directly:
+
+```python
+import asyncio
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.message import Msg
+from agentscope.credential import DashScopeCredential
+
+async def example_model_call():
+    credential = DashScopeCredential(
+        api_key=os.environ["DASHSCOPE_API_KEY"],
+    )
+    model = DashScopeChatModel(
+        credential=credential,
+        model="qwen-max",
+        stream=False,
+    )
+
+    user_msg = Msg(name="user", content="Hi!", role="user")
+
+    response = await model([user_msg])
+
+    print("Response:", response.content)
+    print("Usage:", response.usage)
+
+asyncio.run(example_model_call())
+```
+
+<Tip>
+The model handles formatting internally — you pass `Msg` objects directly to `__call__`, and the model's built-in formatter converts them to the provider-specific API format. When using an agent (e.g., `Agent`), the agent manages the full `Msg → Model → ChatResponse` pipeline automatically.
+</Tip>
+
+### Streaming
+
+To enable streaming, set `stream=True` in the constructor. When streaming is enabled, `__call__` returns an async generator that yields `ChatResponse` instances.
+
+<Note>
+Streaming in AgentScope uses **delta mode** — each intermediate chunk contains only newly generated content. The final chunk (`is_last=True`) contains the fully accumulated content. Use `is_last` to identify the complete response.
+</Note>
+
+```python
+async def example_streaming():
+    model = DashScopeChatModel(
+        credential=credential,
+        model="qwen-max",
+        stream=True,
+    )
+
+    user_msg = Msg(name="user", content="Count from 1 to 5.", role="user")
+
+    generator = await model([user_msg])
+
+    async for chunk in generator:
+        print(chunk.content)      # Delta content for intermediate chunks
+        print(chunk.is_last)      # True for the final chunk
+
+        if chunk.is_last:
+            print("Final:", chunk.content)  # Full accumulated content
+
+asyncio.run(example_streaming())
+```
+
+The following output shows delta content at each step, with the final chunk containing the full accumulated text:
+
+```
+[TextBlock(type='text', text='1')]       # is_last=False (delta)
+[TextBlock(type='text', text='\n2')]     # is_last=False (delta)
+[TextBlock(type='text', text='\n3')]     # is_last=False (delta)
+[TextBlock(type='text', text='\n4')]     # is_last=False (delta)
+[TextBlock(type='text', text='\n5')]     # is_last=False (delta)
+[TextBlock(type='text', text='1\n2\n3\n4\n5')]  # is_last=True (accumulated)
+```
+
+### Reasoning
+
+AgentScope supports reasoning models (chain-of-thought) via `ThinkingBlock`. When `thinking_enable=True` (set via `Parameters`), the model's response includes both the thinking process and the final answer.
+
+```python
+async def example_reasoning():
+    model = DashScopeChatModel(
+        credential=credential,
+        model="qwen3-235b-a22b",
+        parameters=DashScopeChatModel.Parameters(thinking_enable=True),
+        stream=True,
+    )
+
+    user_msg = Msg(name="user", content="What is 17 * 23?", role="user")
+
+    generator = await model([user_msg])
+
+    last_chunk = None
+    async for chunk in generator:
+        last_chunk = chunk
+
+    for block in last_chunk.content:
+        if hasattr(block, "thinking"):
+            print(f"[thinking] {block.thinking[:80]}...")
+        elif hasattr(block, "text"):
+            print(f"[text] {block.text}")
+
+asyncio.run(example_reasoning())
+```
+
+The thinking content is streamed alongside text content using the same delta mode as regular text. The provider-specific parameter names for enabling thinking vary by provider:
+
+| Provider | Parameter | Notes |
+|----------|-----------|-------|
+| Anthropic | `thinking_enable`, `thinking_budget` | Extended thinking with configurable token budget |
+| OpenAI (Chat) | `thinking_enable`, `reasoning_effort` | `reasoning_effort`: `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` |
+| OpenAI (Responses) | `thinking_enable`, `reasoning_effort` | `reasoning_effort`: `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` |
+| DashScope | `thinking_enable`, `thinking_budget` | Supported on Qwen reasoning models |
+| DeepSeek | `thinking_enable`, `reasoning_effort` | `reasoning_effort`: `"high"`, `"max"`. Thinking via `extra_body` |
+| Gemini | `thinking_enable`, `thinking_budget` | Google Gemini reasoning mode |
+| Moonshot | `thinking_enable` | Moonshot Kimi models with thinking support |
+| xAI | `thinking_enable`, `reasoning_effort` | `reasoning_effort`: `"low"`, `"medium"`, `"high"` |
+| Ollama | `thinking_enable` | Supported on models like qwen3, deepseek-r1 |
+
+### Tools API
+
+AgentScope provides a unified tools interface across all providers. Tools are defined using a standardized JSON Schema format and passed to the model via the `tools` parameter.
+
+```python
+from agentscope.tool import ToolChoice
+
+async def example_tools():
+    model = DashScopeChatModel(
+        credential=credential,
+        model="qwen-max",
+        stream=False,
+    )
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "google_search",
+                "description": "Search for a query on Google.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+    ]
+
+    user_msg = Msg(
+        name="user",
+        content="Search AgentScope release notes.",
+        role="user",
+    )
+
+    response = await model(
+        messages=[user_msg],
+        tools=tools,
+        tool_choice=ToolChoice(mode="auto"),
+    )
+
+    print(response.content)
+
+asyncio.run(example_tools())
+```
+
+`ToolChoice` has two fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | `Literal["auto", "none", "required"] \| str` | — | Controls tool invocation behavior (see below) |
+| `tools` | `list[str] \| None` | `None` | Optional list of tool names to filter. When specified, only these tools' schemas are forwarded to the model |
+
+The `mode` field supports the following values:
+
+| Mode | Description |
+|------|-------------|
+| `"auto"` | Model decides whether to call a tool |
+| `"none"` | No tools will be called |
+| `"required"` | Model must call at least one tool |
+| `"<tool_name>"` | Force a specific tool to be called |
+
+<Tip>
+Prefer `mode="<tool_name>"` over `tools=["<tool_name>"]` for forced single-tool calls — the former avoids schema-list changes that would invalidate prompt caches.
+</Tip>
+
+<Tip>
+Use the `Toolkit` class to auto-generate JSON schemas from Python functions with docstrings. See [Tool](/v2/building-blocks/tool) for details.
+</Tip>
+
+### Structured Output
+
+AgentScope supports structured output via `generate_structured_output`, which returns a `StructuredResponse` with validated JSON content conforming to a provided Pydantic model or JSON schema.
+
+```python
+from pydantic import BaseModel
+
+class WeatherInfo(BaseModel):
+    city: str
+    temperature: float
+    unit: str
+
+async def example_structured_output():
+    model = DashScopeChatModel(
+        credential=credential,
+        model="qwen-max",
+        stream=False,
+    )
+
+    user_msg = Msg(
+        name="user",
+        content="What's the weather in Shanghai?",
+        role="user",
+    )
+
+    response = await model.generate_structured_output(
+        messages=[user_msg],
+        structured_model=WeatherInfo,
+    )
+
+    print(response.content)  # Validated dict matching WeatherInfo schema
+
+asyncio.run(example_structured_output())
+```
+
+<Info>
+Internally, `generate_structured_output` synthesizes a tool call with the provided JSON schema, then validates and repairs the model's response against the schema.
+</Info>
+
+### ChatResponse
+
+`ChatResponse` is the unified response object returned by all chat models.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | `Sequence[TextBlock \| ToolCallBlock \| ThinkingBlock \| DataBlock]` | The response content blocks |
+| `is_last` | `bool` | `True` for the final chunk (streaming) or the only response (non-streaming) |
+| `id` | `str` | Unique response identifier |
+| `created_at` | `str` | ISO 8601 creation timestamp |
+| `type` | `Literal["chat_response"]` | Always `"chat_response"` |
+| `usage` | `ChatUsage \| None` | Token usage information |
+| `metadata` | `dict[str, Any]` | Additional response metadata |
+
+### ChatUsage
+
+`ChatUsage` tracks token consumption and timing for a model API call.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `input_tokens` | `int` | — | Number of input tokens |
+| `output_tokens` | `int` | — | Number of output tokens |
+| `time` | `float` | — | Time used in seconds |
+| `type` | `Literal["chat"]` | `"chat"` | Always `"chat"` |
+| `cache_creation_input_tokens` | `int` | `0` | Input tokens used to create the prompt cache |
+| `cache_input_tokens` | `int` | `0` | Input tokens read from the prompt cache |
+| `metadata` | `dict[str, Any] \| None` | `None` | Optional metadata |
+
+### Retry Logic
+
+`ChatModelBase.__call__` includes built-in retry logic. If an API call fails, it retries up to `max_retries` times (default: 3) before raising the exception. Each retry logs a warning message.
+
+```python
+model = DashScopeChatModel(
+    credential=credential,
+    model="qwen-max",
+    max_retries=5,       # Retry up to 5 times on failure
+)
+```
+
+## Provider Reference
+
+AgentScope supports multiple chat model providers. Each provider has a corresponding model class, formatter, and credential.
+
+| Provider | Model Class | Formatter | Credential | Key Features |
+|----------|-------------|-----------|------------|--------------|
+| OpenAI | `OpenAIChatModel` | `OpenAIChatFormatter` | `OpenAICredential` | Chat Completions API with reasoning support, also supports vLLM and OpenAI-compatible APIs |
+| OpenAI (Responses) | `OpenAIResponseModel` | `OpenAIResponseFormatter` | `OpenAICredential` | Responses API with native reasoning/thinking support (o3, o4-mini) |
+| Anthropic | `AnthropicChatModel` | `AnthropicChatFormatter` | `AnthropicCredential` | Claude models with extended thinking and prompt caching |
+| DashScope | `DashScopeChatModel` | `DashScopeChatFormatter` | `DashScopeCredential` | Qwen models, VL multimodal models, reasoning models (OpenAI-compatible) |
+| DeepSeek | `DeepSeekChatModel` | `DeepSeekChatFormatter` | `DeepSeekCredential` | OpenAI-compatible with prompt cache hit tokens |
+| Gemini | `GeminiChatModel` | `GeminiChatFormatter` | `GeminiCredential` | Google Gemini models with multimodal support |
+| Moonshot | `MoonshotChatModel` | `MoonshotChatFormatter` | `MoonshotCredential` | Moonshot AI (Kimi) models with thinking support |
+| xAI | `XAIChatModel` | `XAIChatFormatter` | `XAICredential` | Grok models with native agentic tools and reasoning effort |
+| Ollama | `OllamaChatModel` | `OllamaChatFormatter` | `OllamaCredential` | Local LLM hosting, credential optional |
+
+<Tip>
+Each provider also offers a `MultiAgentFormatter` variant (e.g., `OpenAIMultiAgentFormatter`) designed for multi-agent scenarios where message identity preservation is important.
+</Tip>
+
+### Common Parameters
+
+All model constructors accept the following base parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `credential` | `CredentialBase` | — | Provider-specific credential with API key |
+| `model` | `str` | — | Model identifier (e.g., `"gpt-4.1"`, `"qwen-max"`) |
+| `stream` | `bool` | `True` | Enable streaming output |
+| `max_retries` | `int` | `3` | Maximum API call retry attempts |
+| `context_size` | `int` | `32768` | Context window size for compression |
+| `formatter` | `FormatterBase \| None` | Provider default | Custom formatter override |
+| `parameters` | `Parameters \| None` | `None` | Provider-specific parameters |
+
+### Provider-Specific Parameters
+
+Each provider defines a `Parameters` inner class with provider-specific options.
+
+The following parameters are common across most providers:
+
+| Parameter | Description |
+|-----------|-------------|
+| `max_tokens` | Maximum number of output tokens |
+| `temperature` | Sampling temperature (0.0–2.0) |
+| `top_p` | Nucleus sampling parameter |
+| `thinking_enable` | Enable chain-of-thought reasoning output |
+
+<AccordionGroup>
+  <Accordion title="Provider-specific highlights">
+  - **Anthropic**: `thinking_budget` for controlling thinking depth
+  - **OpenAI Chat**: `reasoning_effort` (`"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`)
+  - **OpenAI Responses**: `reasoning_effort` (`"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`)
+  - **DashScope**: `thinking_budget`, `parallel_tool_calls`, auto-detection of multimodal models
+  - **DeepSeek**: `reasoning_effort` (`"high"`, `"max"`)
+  - **Moonshot**: Kimi reasoning models with thinking support
+  - **xAI**: `reasoning_effort` (`"low"`, `"medium"`, `"high"`), native agentic tools (web search, X search, code execution)
+  - **Ollama**: Local deployment with optional credential
+  </Accordion>
+</AccordionGroup>
+
+### Model Cards
+
+Each provider ships YAML-based model cards under `_models/` directories that describe model capabilities:
+
+- Context window size and output size limits
+- Supported input/output MIME types (text, images, audio, thinking)
+- Parameter schema overrides and constraints
+
+Use `list_models()` to discover available models:
+
+```python
+models = DashScopeChatModel.list_models()
+for card in models:
+    print(f"{card.name}: context={card.context_size}")
+```
