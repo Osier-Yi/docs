@@ -2,3 +2,351 @@
 title: "Agent"
 description: "Learn how to define and configure agents in AgentScope v2.0"
 ---
+
+## Overview
+
+`Agent` is the core abstraction in AgentScope — a **stateless** reasoning-acting loop engine that integrates models, tools, the permission system, human-in-the-loop, context management, middlewares, state management, and the event system into a single unified interface.
+
+Its primary responsibilities are:
+
+- Accepting input messages or events, invoking tools to complete tasks
+- Managing context, including context compression and tool result offloading
+- Providing middleware hooks at key lifecycle stages for custom logic
+- Automatically managing concurrent and sequential tool execution
+
+### Core Interfaces
+
+The main interfaces of the `Agent` class are as follows:
+
+| Method                             | Description                                                           |
+|------------------------------------|-----------------------------------------------------------------------|
+| `reply(msgs, event)`               | Run the reasoning-acting loop and return the final `Msg`              |
+| `reply_stream(msgs, event)`        | Same as `reply`, but yields `AgentEvent` objects as they are produced |
+| `observe(msgs)`                    | Add messages to context without triggering reasoning                  |
+| `compress_context(context_config)` | Compress the context if token count exceeds the threshold             |
+
+### Main Loop
+
+The agent runs a reasoning-acting loop on every `reply` call. The diagram below shows the main control flow.
+
+```mermaid
+flowchart TD
+    A([Input: msg / event]) --> B{Awaiting\noutside event?}
+    B -- Yes --> C[Handle Event\nupdate tool states]
+    B -- No --> D[Add msgs to context]
+    C --> E
+    D --> E
+
+    E{Check next action} -- exit --> F([Return: waiting\nfor outside interaction])
+    E -- reasoning --> G[Compress context\nif needed]
+    G --> H[LLM Call]
+    H -- no tool calls --> I([Return final message])
+    H -- tool calls --> Acting
+
+    subgraph Acting [Acting]
+        direction TB
+        J[Batch tool calls\nsequential / concurrent] --> L[Execute tool calls]
+        L --> M{Permission\nCheck}
+        M -- ALLOW --> N[Run tool → result]
+        M -- ASK / External --> O([Pause & emit\nRequireUserConfirmEvent])
+        M -- DENY --> P[Error result to LLM]
+    end
+
+    N --> E
+    P --> E
+```
+
+## Configuring Agent
+
+Pass these parameters to `Agent(...)` at initialization.
+
+**Identity and model**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name` | `str` | required | Agent identifier, used in messages and logs |
+| `system_prompt` | `str` | required | The agent's base system prompt |
+| `model` | `ChatModelBase` | required | The LLM used for reasoning |
+
+**Tools**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tools` | `list[ToolBase]` | `None` | Built-in or custom tool instances |
+| `skills` | `list[SkillLoaderBase \| str]` | `None` | Skill loaders or skill directory paths |
+| `mcps` | `list[MCPClient]` | `None` | MCP server clients |
+| `tool_groups` | `list[ToolGroup]` | `None` | Tool groups for dynamic activation |
+
+**State and workspace**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `state` | `AgentState` | auto-created | Holds context, permission context, and session state |
+| `workspace` | `WorkspaceBase` | `None` | Workspace for context and tool result offloading |
+| `middlewares` | `list[MiddlewareBase]` | `None` | Applied at reply, reasoning, acting, model call, and system prompt hooks |
+
+**Configuration objects**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model_config` | `ModelConfig` | Retry count and fallback model |
+| `context_config` | `ContextConfig` | Context compression thresholds and tool result limits |
+| `react_config` | `ReActConfig` | Max iterations and rejection handling |
+| `tool_config` | `ToolConfig` | Enable/disable built-in task tools and skill viewer |
+
+<AccordionGroup>
+  <Accordion title="ModelConfig">
+    | Field | Type | Default | Description |
+    |-------|------|---------|-------------|
+    | `max_retries` | `int` | `3` | Retries on model call failure |
+    | `fallback_model` | `ChatModelBase \| None` | `None` | Secondary model used after primary exhausts retries |
+  </Accordion>
+  <Accordion title="ContextConfig">
+    | Field | Type | Default | Description |
+    |-------|------|---------|-------------|
+    | `trigger_ratio` | `float` | `0.8` | Compression triggers when token count exceeds this fraction of context length |
+    | `reserve_ratio` | `float` | `0.1` | Fraction of context to keep after compression |
+    | `tool_result_limit` | `int` | `3000` | Max tokens per tool result; excess is truncated and optionally offloaded |
+    | `compression_prompt` | `str` | built-in | Prompt used to guide the compression summary |
+    | `summary_template` | `str` | built-in | Template for presenting the compressed summary to the agent |
+  </Accordion>
+  <Accordion title="ReActConfig">
+    | Field | Type | Default | Description |
+    |-------|------|---------|-------------|
+    | `max_iters` | `int` | `20` | Maximum reasoning-acting iterations per reply |
+    | `stop_on_reject` | `bool` | `False` | Stop reasoning when a tool call is rejected instead of continuing |
+  </Accordion>
+  <Accordion title="ToolConfig">
+    | Field | Type | Default | Description |
+    |-------|------|---------|-------------|
+    | `task_tools` | `bool` | `True` | Enable built-in task management tools (TaskCreate, TaskGet, TaskList, TaskUpdate) |
+    | `skill_viewer` | `bool` | `True` | Enable the built-in skill viewer tool |
+  </Accordion>
+</AccordionGroup>
+
+A minimal agent setup:
+
+```python
+from agentscope import Agent
+from agentscope.model import DashScopeChat
+
+model = DashScopeChat(model_name="qwen-max")
+
+agent = Agent(
+    name="my_agent",
+    system_prompt="You are a helpful assistant.",
+    model=model,
+)
+```
+
+## Running the Agent
+
+Both `reply` and `reply_stream` accept the same parameters and drive the same reasoning-acting loop. The difference is in how results are delivered.
+
+### reply
+
+`reply` consumes all events internally and returns the final `Msg` when the agent finishes or pauses for outside interaction.
+
+```python
+import asyncio
+from agentscope.message import UserMsg
+
+async def main():
+    msg = UserMsg(name="user", content="What files are in the current directory?")
+    result = await agent.reply(msg)
+    print(result.get_text())
+
+asyncio.run(main())
+```
+
+### reply_stream
+
+`reply_stream` yields `AgentEvent` objects as they are produced, letting you stream text output, tool call progress, and lifecycle events to the user in real time.
+
+```python
+async def main():
+    msg = UserMsg(name="user", content="Summarize the README.")
+    async for event in agent.reply_stream(msg):
+        if hasattr(event, "delta"):
+            print(event.delta, end="", flush=True)
+
+asyncio.run(main())
+```
+
+### observe
+
+Use `observe` to inject messages into the agent's context without triggering a reply — useful in multi-agent setups where one agent needs to see another's output.
+
+```python
+await agent.observe(other_agent_msg)
+```
+
+## Compact Context
+
+The agent automatically compresses its context when the token count exceeds `context_config.trigger_ratio × model.context_length`. Compression summarizes older messages and, if a `workspace` is configured, offloads them to disk.
+
+You can also trigger compression manually:
+
+```python
+from agentscope.agent import ContextConfig
+
+# Use the agent's default config
+await agent.compress_context()
+
+# Or pass a custom config for this call only
+await agent.compress_context(
+    ContextConfig(trigger_ratio=0.6, reserve_ratio=0.2)
+)
+```
+
+<Note>
+If the system prompt alone exceeds the compression threshold, `compress_context` raises a `RuntimeError`. Keep system prompts concise or increase the model's context length.
+</Note>
+
+Tool results that exceed `tool_result_limit` tokens are truncated automatically. If a `workspace` is set, the truncated portion is offloaded and the agent receives a path reference it can read on demand.
+
+## Human-in-the-Loop
+
+The agent pauses execution and emits special events when it encounters two situations: a tool call that requires **user confirmation** (permission system returns ASK), or a tool marked as **external execution** (the result must come from outside the agent). In both cases, you resume the agent by passing a result event back via `reply`.
+
+### User Confirmation
+
+When the permission system determines a tool call needs user approval, the agent emits a `RequireUserConfirmEvent` and pauses.
+
+<Steps>
+  <Step title="Receive the RequireUserConfirmEvent">
+    Use `reply_stream` to detect the pause. The event has the following structure:
+
+    <ParamField path="reply_id" type="str" required>
+      ID of the current reply, used to resume the agent.
+    </ParamField>
+    <ParamField path="tool_calls" type="list[ToolCallBlock]" required>
+      Tool calls pending user confirmation. Each `ToolCallBlock` contains:
+      <Expandable>
+        <ParamField path="id" type="str">Unique identifier for this tool call.</ParamField>
+        <ParamField path="name" type="str">The tool name (e.g. `"Bash"`, `"Write"`).</ParamField>
+        <ParamField path="input" type="str">JSON-encoded input parameters.</ParamField>
+        <ParamField path="suggested_rules" type="list[PermissionRule]">Auto-generated permission rules the user can accept to allow similar future calls.</ParamField>
+      </Expandable>
+    </ParamField>
+
+    ```python
+    from agentscope.event import RequireUserConfirmEvent
+
+    async for event in agent.reply_stream(msg):
+        if isinstance(event, RequireUserConfirmEvent):
+            for tc in event.tool_calls:
+                print(f"Tool: {tc.name}, Input: {tc.input}")
+                print(f"Suggested rules: {tc.suggested_rules}")
+    ```
+  </Step>
+  <Step title="Build the confirmation result">
+    For each pending tool call, create a `ConfirmResult` indicating whether to allow or deny it. You can also modify the tool call input or accept suggested permission rules:
+
+    ```python
+    from agentscope.event import ConfirmResult, UserConfirmResultEvent
+
+    confirm_results = []
+    for tc in event.tool_calls:
+        confirm_results.append(ConfirmResult(
+            confirmed=True,           # or False to deny
+            tool_call=tc,             # pass back (optionally modified)
+            rules=tc.suggested_rules, # accept rules for future auto-allow
+        ))
+    ```
+  </Step>
+  <Step title="Resume the agent">
+    Pass the `UserConfirmResultEvent` back to `reply` or `reply_stream`:
+
+    ```python
+    confirm_event = UserConfirmResultEvent(
+        reply_id=event.reply_id,
+        confirm_results=confirm_results,
+    )
+    result = await agent.reply(event=confirm_event)
+    ```
+
+    - **Confirmed** tool calls execute immediately and the agent continues reasoning
+    - **Denied** tool calls produce an error result visible to the LLM, which may retry with a different approach
+    - **Accepted rules** are persisted to the permission engine — matching future calls are auto-allowed without prompting again
+  </Step>
+</Steps>
+
+### External Tool Execution
+
+When the agent calls a tool with `is_external_tool = True`, it emits a `RequireExternalExecutionEvent` and pauses. The tool's logic runs outside the agent — typically by a human operator or an external system.
+
+<Steps>
+  <Step title="Receive the RequireExternalExecutionEvent">
+    The event has the following structure:
+
+    <ParamField path="reply_id" type="str" required>
+      ID of the current reply, used to resume the agent.
+    </ParamField>
+    <ParamField path="tool_calls" type="list[ToolCallBlock]" required>
+      Tool calls to be executed externally. Each `ToolCallBlock` contains:
+      <Expandable>
+        <ParamField path="id" type="str">Unique identifier for this tool call.</ParamField>
+        <ParamField path="name" type="str">The external tool name.</ParamField>
+        <ParamField path="input" type="str">JSON-encoded input parameters.</ParamField>
+      </Expandable>
+    </ParamField>
+
+    ```python
+    from agentscope.event import RequireExternalExecutionEvent
+
+    async for event in agent.reply_stream(msg):
+        if isinstance(event, RequireExternalExecutionEvent):
+            for tc in event.tool_calls:
+                print(f"Execute externally: {tc.name}({tc.input})")
+    ```
+  </Step>
+  <Step title="Execute externally and build results">
+    Run the operation outside the agent and wrap the results as `ToolResultBlock` objects:
+
+    ```python
+    from agentscope.message import ToolResultBlock, TextBlock, ToolResultState
+    from agentscope.event import ExternalExecutionResultEvent
+
+    execution_results = []
+    for tc in event.tool_calls:
+        # Perform the actual operation (API call, human action, etc.)
+        output = await run_external_operation(tc.name, tc.input)
+
+        execution_results.append(ToolResultBlock(
+            id=tc.id,
+            name=tc.name,
+            output=[TextBlock(text=output)],
+            state=ToolResultState.SUCCESS,
+        ))
+    ```
+  </Step>
+  <Step title="Resume the agent">
+    Pass the `ExternalExecutionResultEvent` back to resume:
+
+    ```python
+    external_event = ExternalExecutionResultEvent(
+        reply_id=event.reply_id,
+        execution_results=execution_results,
+    )
+    result = await agent.reply(event=external_event)
+    ```
+
+    The results are injected into the agent's context and reasoning continues from where it left off.
+  </Step>
+</Steps>
+
+<Tip>
+Use `reply_stream` when building interactive UIs — it lets you detect pause events in real time and prompt the user immediately. Use `reply` when you have pre-built automation that handles events programmatically.
+</Tip>
+
+## Further Reading
+
+<CardGroup cols={2}>
+  <Card title="Permission System" href="/v2/building-blocks/permission-system">
+    Control which tools the agent can call and under what conditions.
+  </Card>
+  <Card title="Middleware" href="/v2/building-blocks/middleware">
+    Intercept and modify agent behavior at reply, reasoning, acting, and model call hooks.
+  </Card>
+</CardGroup>
