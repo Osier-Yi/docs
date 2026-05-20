@@ -32,11 +32,13 @@ flowchart TB
         direction TB
         WB[WorkspaceBase]
         LW[LocalWorkspace]
+        GM[GatewayMixin]
         DW[DockerWorkspace]
         EW[E2BWorkspace]
         WB --> LW
-        WB --> DW
-        WB --> EW
+        WB --> GM
+        GM --> DW
+        GM --> EW
     end
 
     subgraph Backend ["Backend Layer"]
@@ -58,7 +60,9 @@ flowchart TB
 The three-layer design separates concerns:
 
 - **Agent Layer** — consumes tools, MCPs, and instructions; delegates execution
-- **Workspace Layer** — unified interface (`WorkspaceBase`) with three implementations
+- **Workspace Layer** — unified interface (`WorkspaceBase`) with two branches:
+  - `LocalWorkspace` — inherits directly from `WorkspaceBase`
+  - `GatewayMixin(WorkspaceBase)` — intermediate base that adds in-container MCP gateway management; `DockerWorkspace` and `E2BWorkspace` inherit from it
 - **Backend Layer** — actual execution substrate (host FS, Docker SDK, E2B SDK, MCP Gateway)
 
 ## Three Workspace Backends
