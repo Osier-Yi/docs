@@ -32,13 +32,13 @@ flowchart TB
         direction TB
         WB[WorkspaceBase]
         LW[LocalWorkspace]
-        GM[GatewayMixin]
+        WM[WorkspaceWithMCP]
         DW[DockerWorkspace]
         EW[E2BWorkspace]
         WB --> LW
-        WB --> GM
-        GM --> DW
-        GM --> EW
+        WB --> WM
+        WM --> DW
+        WM --> EW
     end
 
     subgraph Backend ["Backend Layer"]
@@ -62,7 +62,7 @@ The three-layer design separates concerns:
 - **Agent Layer** — consumes tools, MCPs, and instructions; delegates execution
 - **Workspace Layer** — unified interface (`WorkspaceBase`) with two branches:
   - `LocalWorkspace` — inherits directly from `WorkspaceBase`
-  - `GatewayMixin(WorkspaceBase)` — intermediate base that adds in-container MCP gateway management; `DockerWorkspace` and `E2BWorkspace` inherit from it
+  - `WorkspaceWithMCP(WorkspaceBase)` — intermediate base that adds in-container MCP gateway management; `DockerWorkspace` and `E2BWorkspace` inherit from it
 - **Backend Layer** — actual execution substrate (host FS, Docker SDK, E2B SDK, MCP Gateway)
 
 ## Three Workspace Backends
@@ -72,7 +72,7 @@ The three-layer design separates concerns:
 | **Backend** | Host filesystem | Docker container (docker-py) | E2B cloud sandbox (AsyncSandbox) |
 | **Tools** | Built-in Bash, Edit, Glob, Grep, Read, Write | In-container MCP Gateway | In-sandbox MCP Gateway |
 | **MCP management** | Direct MCPClient list, persisted to `.mcp` | Gateway REST admin API | Gateway REST admin API |
-| **Network** | No isolation | host -> container:5600 | host -> sandbox HTTPS |
+| **Network** | No isolation | host → container:5600 | host → sandbox HTTPS |
 | **Skill deployment** | Filesystem copy | docker cp (tar) | E2B file write |
 | **Best for** | Local dev, agent services | Production, isolation | Cloud training, RL rollout |
 
@@ -96,7 +96,7 @@ await workspace.initialize()
   Absolute path to the workspace root directory. Created if it doesn't exist.
 </ParamField>
 <ParamField path="skill_paths" type="list[str] | None" default="None">
-  Local directories to seed as skills on first initialization. Each must contain a `SKILL.md`.
+  Local directories to seed as skills on first initialization. Each must contain a `SKILL.md` with `name` and `description` fields in its YAML front matter.
 </ParamField>
 <ParamField path="default_mcps" type="list[MCPClient] | None" default="None">
   MCP clients to use when no persisted `.mcp` file exists. On subsequent initializations, the workspace restores MCPs from the `.mcp` file instead.
@@ -124,7 +124,7 @@ await workspace.initialize()
 
 `LocalWorkspace` persists the MCP client list to a `.mcp` file in the workspace root. On initialization:
 
-1. If `.mcp` exists — restore MCPs from the file (ignoring `default_mcps`)
+1. If `.mcp` exists — restore MCPs from the file (ignoring `default_mcps`), reconnect stateful clients
 2. If `.mcp` does not exist — use `default_mcps`
 3. After `add_mcp` / `remove_mcp` — the `.mcp` file is updated immediately
 
@@ -132,7 +132,7 @@ This ensures MCP configuration survives workspace restarts without requiring the
 
 ## Using DockerWorkspace
 
-`DockerWorkspace` runs an isolated Docker container with an in-container MCP Gateway that aggregates tools from multiple MCP servers into a single REST endpoint.
+`DockerWorkspace` runs an isolated Docker container with an in-container MCP Gateway that aggregates tools from multiple MCP servers into a single REST endpoint. It inherits from `WorkspaceWithMCP`.
 
 ```python
 from agentscope.workspace import DockerWorkspace, MCPServerConfig
@@ -162,11 +162,11 @@ await workspace.initialize()
 <ParamField path="image" type="str" default="ubuntu:22.04">
   Docker image to use for the container.
 </ParamField>
-<ParamField path="mcp_servers" type="list[MCPServerConfig] | None" default="None">
-  MCP servers to run inside the container via the gateway.
-</ParamField>
 <ParamField path="working_dir" type="str" default="/workspace">
   Working directory inside the container.
+</ParamField>
+<ParamField path="mcp_servers" type="list[MCPServerConfig] | None" default="None">
+  MCP servers to run inside the container via the gateway.
 </ParamField>
 <ParamField path="gateway_port" type="int" default="5600">
   Port the in-container MCP gateway listens on.
@@ -183,10 +183,13 @@ await workspace.initialize()
 <ParamField path="startup_commands" type="list[str] | None" default="None">
   Shell commands run after container creation (before gateway starts). Failures raise `RuntimeError`.
 </ParamField>
+<ParamField path="instructions" type="str" default="built-in">
+  Custom system prompt fragment.
+</ParamField>
 
 ### MCP Gateway
 
-The gateway is a lightweight Python process running inside the container. It connects to all configured MCP servers and exposes a unified REST API to the host.
+The gateway is a lightweight Python process running inside the container. It connects to all configured MCP servers and exposes a unified REST API to the host. Gateway dependencies (`mcp`, `uvicorn`, `starlette`) are automatically installed if missing.
 
 ```mermaid
 flowchart LR
@@ -210,9 +213,11 @@ The gateway provides:
 - **Health check** — `GET /health` endpoint for readiness probing
 - **Dynamic add/remove** — `POST /mcp/add` and `POST /mcp/remove` admin endpoints
 
+On the host side, `_RestGatewayClient` (an `MCPClient` subclass) and `_RestMCPTool` (a `ToolBase` adapter) transparently proxy tool calls over HTTP, making gateway-backed tools behave identically to direct MCP tools from the agent's perspective.
+
 ## Using E2BWorkspace
 
-`E2BWorkspace` uses [E2B](https://e2b.dev/) cloud sandboxes for fully isolated, ephemeral environments. The architecture is identical to `DockerWorkspace` (in-sandbox MCP gateway), but uses the E2B SDK for provisioning.
+`E2BWorkspace` uses [E2B](https://e2b.dev/) cloud sandboxes for fully isolated, ephemeral environments. The architecture is identical to `DockerWorkspace` (in-sandbox MCP gateway via `WorkspaceWithMCP`), but uses the E2B SDK for provisioning.
 
 ```python
 from agentscope.workspace import E2BWorkspace, MCPServerConfig
@@ -240,14 +245,20 @@ await workspace.initialize()
 <ParamField path="api_key" type="str" default="">
   E2B API key. Can also be set via `E2B_API_KEY` environment variable.
 </ParamField>
+<ParamField path="domain" type="str" default="">
+  Optional E2B API domain override.
+</ParamField>
 <ParamField path="timeout_seconds" type="int" default="300">
   Sandbox auto-shutdown timeout in seconds.
+</ParamField>
+<ParamField path="working_dir" type="str" default="/home/user">
+  Working directory inside the sandbox.
 </ParamField>
 <ParamField path="mcp_servers" type="list[MCPServerConfig] | None" default="None">
   MCP servers to run inside the sandbox via the gateway.
 </ParamField>
-<ParamField path="working_dir" type="str" default="/home/user">
-  Working directory inside the sandbox.
+<ParamField path="gateway_port" type="int" default="5600">
+  Port the in-sandbox MCP gateway listens on.
 </ParamField>
 <ParamField path="env" type="dict[str, str] | None" default="None">
   Environment variables set inside the sandbox.
@@ -257,6 +268,9 @@ await workspace.initialize()
 </ParamField>
 <ParamField path="startup_commands" type="list[str] | None" default="None">
   Shell commands run after sandbox creation.
+</ParamField>
+<ParamField path="instructions" type="str" default="built-in">
+  Custom system prompt fragment.
 </ParamField>
 
 ## Connecting Workspace to Agent
@@ -363,15 +377,18 @@ from at least two sources before presenting results.
 await workspace.remove_skill("Web Search")
 ```
 
-### How Skill Discovery Works (LocalWorkspace)
+### How Skill Discovery Works
 
-`LocalWorkspace` discovers skills by scanning the `skills/` directory:
+**LocalWorkspace** discovers skills by scanning the `skills/` directory:
 
-1. **Directory scanning** — `list_skills()` reads all subdirectories, loads each `SKILL.md`, and returns valid skills
+1. **Directory scanning** — `list_skills()` reads all subdirectories concurrently, loads each `SKILL.md`, and returns valid skills
 2. **Content-hash deduplication** — on `add_skill()`, a SHA-256 hash of the `SKILL.md` content is compared against existing skills; duplicates are silently skipped
-3. **Manual changes** — skills can be manually added or removed from the `skills/` directory; changes are picked up automatically on the next `list_skills()` call
+3. **Concurrency safety** — `add_skill()` and `remove_skill()` are serialized by an internal `_skill_lock`
+4. **Manual changes** — skills can be manually added or removed from the `skills/` directory; changes are picked up automatically on the next `list_skills()` call
 
-For `DockerWorkspace` and `E2BWorkspace`, skills are deployed by copying the directory into the container/sandbox via the respective SDK (tar archive or file write).
+**DockerWorkspace** deploys skills by copying the directory into the container via tar archive (`container.put_archive`), and discovers skills via `find` command + `SKILL.md` parsing inside the container.
+
+**E2BWorkspace** deploys skills by writing individual files via the E2B SDK (`sandbox.files.write`), and discovers skills the same way as Docker (shell `find` + parsing).
 
 ## Context Offloading
 
@@ -400,7 +417,7 @@ sequenceDiagram
 
 ### Binary Data Handling
 
-Messages containing base64-encoded binary data (images, files) are automatically decoded and saved to the `data/` directory during offloading. The base64 content is replaced with a `file://` URL reference, reducing serialization overhead.
+Messages containing base64-encoded binary data (images, files) are automatically decoded and saved to the `data/` directory during offloading. The base64 content is replaced with a `file://` URL reference, reducing serialization overhead. Files are content-addressed (SHA-256 hash as filename) to avoid duplicates.
 
 ## Workspace Manager
 
@@ -418,8 +435,8 @@ sequenceDiagram
     WM-->>Service: workspace (tracked by workspace_id)
 
     Note over Service: Subsequent request
-    Service->>WM: get_workspace(workspace_id)
-    WM-->>Service: workspace (from memory)
+    Service->>WM: get_workspace(user_id, agent_id, session_id, workspace_id)
+    WM-->>Service: workspace (from memory, or create on cache miss)
 
     Note over Service: Manager restart
     Service->>WM: restore(serialized_state)
@@ -466,6 +483,8 @@ ws = await manager.create_workspace(
   Seconds before an idle cached workspace is evicted.
 </ParamField>
 
+`LocalWorkspaceManager` overrides `get_workspace` to perform TTL eviction before lookup and refresh the last-access timestamp on cache hit.
+
 ### DockerWorkspaceManager
 
 Creates Docker-container workspaces with shared default configuration. Supports pool mode for parallel rollout.
@@ -482,6 +501,25 @@ manager = DockerWorkspaceManager(
 )
 await manager.initialize()
 ```
+
+<ParamField path="image" type="str" default="ubuntu:22.04">
+  Default Docker image for new workspaces.
+</ParamField>
+<ParamField path="working_dir" type="str" default="/workspace">
+  Default working directory inside containers.
+</ParamField>
+<ParamField path="default_mcp_servers" type="list[MCPServerConfig] | None" default="None">
+  MCP servers configured in every new workspace.
+</ParamField>
+<ParamField path="gateway_port" type="int" default="5600">
+  Default gateway port for new workspaces.
+</ParamField>
+<ParamField path="default_env" type="dict[str, str] | None" default="None">
+  Environment variables set in every new container.
+</ParamField>
+<ParamField path="default_startup_commands" type="list[str] | None" default="None">
+  Shell commands run in every new container after creation.
+</ParamField>
 
 ### E2BWorkspaceManager
 
@@ -501,12 +539,43 @@ manager = E2BWorkspaceManager(
 await manager.initialize()
 ```
 
+<ParamField path="template" type="str" default="base">
+  Default E2B sandbox template.
+</ParamField>
+<ParamField path="api_key" type="str" default="">
+  E2B API key (shared across all workspaces).
+</ParamField>
+<ParamField path="domain" type="str" default="">
+  Optional E2B API domain override.
+</ParamField>
+<ParamField path="timeout_seconds" type="int" default="300">
+  Default sandbox auto-shutdown timeout.
+</ParamField>
+<ParamField path="working_dir" type="str" default="/home/user">
+  Default working directory inside sandboxes.
+</ParamField>
+<ParamField path="default_mcp_servers" type="list[MCPServerConfig] | None" default="None">
+  MCP servers configured in every new workspace.
+</ParamField>
+<ParamField path="gateway_port" type="int" default="5600">
+  Default gateway port for new workspaces.
+</ParamField>
+<ParamField path="default_env" type="dict[str, str] | None" default="None">
+  Environment variables set in every new sandbox.
+</ParamField>
+<ParamField path="default_metadata" type="dict[str, str] | None" default="None">
+  Metadata attached to every new sandbox.
+</ParamField>
+<ParamField path="default_startup_commands" type="list[str] | None" default="None">
+  Shell commands run in every new sandbox after creation.
+</ParamField>
+
 ### Manager API
 
 | Method | Description |
 |--------|-------------|
 | `create_workspace(user_id, agent_id, session_id)` | Create and track a new workspace |
-| `get_workspace(workspace_id)` | Look up a live workspace (O(1) in-memory) |
+| `get_workspace(user_id, agent_id, session_id, workspace_id)` | Look up a live workspace; creates on cache miss |
 | `restore(state)` | Reconnect to a running container/sandbox from serialized state |
 | `close(workspace_id)` | Close and un-track a single workspace |
 | `close_all()` | Close all workspaces, pool, and release resources |
