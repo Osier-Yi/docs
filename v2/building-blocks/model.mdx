@@ -571,6 +571,7 @@ Each provider ships two formatter variants:
 By default, every model uses its **ChatFormatter**. To switch to multi-agent mode, pass the MultiAgent variant when constructing the model — no agent code changes are required:
 
 ```python
+import os
 from agentscope.model import OpenAIChatModel
 from agentscope.credential import OpenAICredential
 from agentscope.formatter import OpenAIMultiAgentFormatter
