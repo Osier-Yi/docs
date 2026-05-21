@@ -84,8 +84,9 @@ The `input_kwargs` dictionary contains the following keys:
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `msgs` | `Msg \| list[Msg] \| None` | The input messages triggering the reply |
-| `event` | `UserConfirmResultEvent \| ExternalExecutionResultEvent \| None` | Optional event context |
+| `inputs` | `Msg \| list[Msg] \| UserConfirmResultEvent \| ExternalExecutionResultEvent \| None` | The unified input that triggers this reply — new message(s), a resumption event from a previous interaction, or None |
+
+The generator yields `AgentEvent` instances (status updates, deltas, tool calls) and a final `Msg` containing the complete reply.
 
 Wrap `next_handler()` and yield each item to observe the reply process. Calling `next_handler()` without arguments forwards the original input unchanged:
 
@@ -101,20 +102,21 @@ class ReplyMiddleware(MiddlewareBase):
 You can modify input by passing keyword overrides to `next_handler(...)`:
 
 ```python
-from agentscope.message import UserMsg
+from agentscope.message import Msg, UserMsg
 
 class ModifyInputMiddleware(MiddlewareBase):
     async def on_reply(self, agent, input_kwargs, next_handler):
-        original_msg = input_kwargs["msgs"]
-        modified_msg = UserMsg(
-            name=original_msg.name,
-            content="[Prefix] " + original_msg.content,
-        )
-        async for item in next_handler(
-            msgs=modified_msg,
-            event=input_kwargs.get("event"),
-        ):
-            yield item
+        original = input_kwargs["inputs"]
+        if isinstance(original, Msg):
+            modified = UserMsg(
+                name=original.name,
+                content="[Modified] Describe the weather.",
+            )
+            async for item in next_handler(inputs=modified):
+                yield item
+        else:
+            async for item in next_handler():
+                yield item
 ```
 
 ### on_reasoning
@@ -199,7 +201,7 @@ class SanitizeToolInputMiddleware(MiddlewareBase):
         sanitized = ToolCallBlock(
             id=tool_call.id,
             name=tool_call.name,
-            input=sanitize(tool_call.input),
+            input=tool_call.input.replace("DROP TABLE", ""),
             state=tool_call.state,
         )
         async for event in next_handler(tool_call=sanitized):
@@ -269,8 +271,9 @@ from agentscope.message import Msg
 
 class InjectSystemMessageMiddleware(MiddlewareBase):
     async def on_model_call(self, agent, input_kwargs, next_handler):
+        from agentscope.message import TextBlock
         messages = [
-            Msg(name="system", content="Extra instruction", role="system"),
+            Msg(name="system", content=[TextBlock(text="Extra instruction")], role="system"),
         ] + input_kwargs["messages"]
 
         return await next_handler(
@@ -400,18 +403,26 @@ AgentScope provides a built-in `TracingMiddleware` that adds **OpenTelemetry tra
 
 ### Setup
 
-Before using `TracingMiddleware`, call `setup_tracing()` to configure the OTLP exporter endpoint:
+Before using `TracingMiddleware`, configure an OpenTelemetry `TracerProvider` with an OTLP exporter:
 
 ```python
-from agentscope.middleware import TracingMiddleware, setup_tracing
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-setup_tracing(endpoint="http://localhost:4318/v1/traces")
+provider = TracerProvider()
+provider.add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")),
+)
+trace.set_tracer_provider(provider)
 ```
 
 Then attach `TracingMiddleware` to your agent:
 
 ```python
 from agentscope.agent import Agent
+from agentscope.middleware import TracingMiddleware
 
 agent = Agent(
     name="assistant",
@@ -459,7 +470,7 @@ agent reply (on_reply)
 
 ### Zero-Overhead When Disabled
 
-If `setup_tracing()` has not been called, every hook short-circuits directly to `next_handler()` with minimal overhead — no spans are created, no attributes are computed.
+If no `TracerProvider` has been configured, every hook short-circuits directly to `next_handler()` with minimal overhead — no spans are created, no attributes are computed.
 
 <Info>
 When the agent receives an `ExternalExecutionResultEvent` (tools executed outside the agent), `TracingMiddleware` creates synthetic spans for each externally-executed tool result, preserving full observability even for tools that run in external systems.
