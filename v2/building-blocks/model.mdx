@@ -5,9 +5,20 @@ description: "Configure and connect LLM model providers in AgentScope"
 
 ## Overview
 
-AgentScope's model layer provides a unified abstraction for interacting with various AI model providers. The architecture is centered around **Credential** — each credential represents authentication information for a specific provider (e.g. an API key for OpenAI, DashScope, or Anthropic). From a single credential, you can access different types of models offered by that provider: **Chat Models** for text generation and conversation, **TTS** for text-to-speech, and **Realtime Models** for voice and streaming interactions.
+AgentScope's model layer provides a unified abstraction for interacting with various AI model providers. The architecture is centered around **Credential** — each credential represents authentication information for a specific provider (OpenAI, Anthropic, DashScope, Gemini, etc.). From a single credential, you can access different types of models offered by that provider: **Chat Models** for text generation and conversation, **TTS** for text-to-speech, and **Realtime Models** for voice and streaming interactions.
 
-A key design principle is that AgentScope's model layer is **built to serve frontend logic**. Each model is described by a `ModelCard` that declaratively captures the model's capabilities and constraints — what input modalities it accepts, what output it produces, whether it supports reasoning, and what parameter ranges are valid. This enables the frontend to dynamically render model selectors, parameter forms, and feature toggles without hardcoding any provider-specific knowledge. See [Integrate with Frontend](#integrate-with-frontend) for details.
+A `CredentialBase` subclass is simply a Pydantic model holding provider-specific auth fields (e.g. `api_key`, `base_url`) and a `get_chat_model_class()` method that returns the corresponding `ChatModelBase` subclass. Creating one is straightforward:
+
+```python
+import os
+from agentscope.credential import DashScopeCredential
+
+credential = DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"])
+```
+
+This credential can then be passed to any model constructor. You can also discover available models via `DashScopeCredential.list_models()` (a classmethod available on any credential class). See [Custom Provider](#custom-provider) for how to create your own credential and model classes.
+
+A key design principle is that AgentScope's model layer is **designed to be introspectable** — each model is described by a `ModelCard` that declaratively captures its capabilities and constraints (input/output modalities, reasoning support, parameter ranges). This enables frontends and tooling to dynamically render model selectors, parameter forms, and feature toggles purely from `ModelCard` metadata, without hardcoding any provider-specific knowledge. See [Integrate with Frontend](#integrate-with-frontend) for details.
 
 ## Chat Model
 
@@ -209,7 +220,7 @@ Thinking content streams in the same delta mode as text. All providers share the
 
 | Provider | Parameters | Notes |
 |----------|-----------|-------|
-| Anthropic | `thinking_enable`, `thinking_budget` | Extended thinking with configurable token budget |
+| Anthropic | `thinking_enable`, `thinking_budget` | Extended thinking; `thinking_budget` is in tokens and must be strictly less than `max_tokens` (the SDK auto-expands `max_tokens` if needed) |
 | OpenAI (Chat) | `thinking_enable`, `reasoning_effort` | `reasoning_effort`: `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` |
 | OpenAI (Responses) | `thinking_enable`, `reasoning_effort` | Same values as OpenAI Chat |
 | DashScope | `thinking_enable`, `thinking_budget` | Supports Qwen reasoning models |
@@ -224,7 +235,11 @@ Thinking content streams in the same delta mode as text. All providers share the
 AgentScope provides a unified tool-calling interface across all providers. Tools are defined using the standard JSON Schema format.
 
 ```python
+import asyncio
 import json
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
 from agentscope.tool import ToolChoice
 from agentscope.message import (
     UserMsg, AssistantMsg, ToolCallBlock, ToolResultBlock, ToolResultState,
@@ -350,6 +365,10 @@ Under the hood, `generate_structured_output` synthesizes a forced tool call base
 AgentScope uses `DataBlock` to represent binary media (images, audio, video). You construct a `DataBlock` with a `URLSource` or `Base64Source`, then include it in the `Msg.content` list alongside `TextBlock` entries. The model's formatter automatically converts it to the provider-specific API format.
 
 ```python
+import asyncio
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
 from agentscope.message import UserMsg, TextBlock, DataBlock, URLSource, Base64Source
 
 async def multimodal_example():
@@ -565,7 +584,7 @@ model = OpenAIChatModel(
 
 The key difference between the two variants:
 
-- **ChatFormatter**: preserves `Msg` roles directly (user, assistant, tool). Works well for standard user–assistant conversations where the API's native role system maps cleanly to the participants.
+- **ChatFormatter**: preserves `Msg` roles directly (user, assistant, system). Works well for standard user–assistant conversations where the API's native role system maps cleanly to the participants.
 - **MultiAgentFormatter**: groups consecutive agent messages and wraps them in `<history>` tags with the sender's name, so the model sees a coherent multi-party context. Tool call/result sequences are kept in their native API format by delegating to the ChatFormatter internally.
 
 All provider formatters extend `FormatterBase` and are importable from `agentscope.formatter`:
@@ -620,6 +639,7 @@ from pydantic import BaseModel, Field
 from agentscope.model import ChatModelBase, ChatResponse
 from agentscope.message import Msg
 from agentscope.tool import ToolChoice
+from agentscope.formatter import FormatterBase, OpenAIChatFormatter
 
 class MyProviderChatModel(ChatModelBase):
     class Parameters(BaseModel):
@@ -636,6 +656,7 @@ class MyProviderChatModel(ChatModelBase):
         stream: bool = True,
         max_retries: int = 3,
         context_size: int = 128000,
+        formatter: FormatterBase | None = None,
     ) -> None:
         super().__init__(
             credential=credential,
@@ -645,6 +666,9 @@ class MyProviderChatModel(ChatModelBase):
             max_retries=max_retries,
             context_size=context_size,
         )
+        # If your API follows the OpenAI format, reuse OpenAIChatFormatter;
+        # otherwise implement your own FormatterBase subclass.
+        self.formatter = formatter or OpenAIChatFormatter()
 
     async def _call_api(
         self,
