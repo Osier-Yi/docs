@@ -15,6 +15,7 @@
         "tabs": [
           {
             "tab": "Guides",
+            "locale": "en",
             "groups": [
               {
                 "group": "Get Started",
@@ -47,6 +48,45 @@
                 "group": "Others",
                 "pages": [
                   "v2/others/faq"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "指南",
+            "locale": "zh",
+            "groups": [
+              {
+                "group": "快速开始",
+                "pages": [
+                  "zh/v2/index",
+                  "zh/v2/quickstart"
+                ]
+              },
+              {
+                "group": "核心模块",
+                "pages": [
+                  "zh/v2/building-blocks/message-and-event",
+                  "zh/v2/building-blocks/agent",
+                  "zh/v2/building-blocks/model",
+                  "zh/v2/building-blocks/context",
+                  "zh/v2/building-blocks/tool",
+                  "zh/v2/building-blocks/permission-system",
+                  "zh/v2/building-blocks/middleware",
+                  "zh/v2/building-blocks/workspace"
+                ]
+              },
+              {
+                "group": "部署",
+                "pages": [
+                  "zh/v2/deploy/agent-service",
+                  "zh/v2/deploy/sandbox"
+                ]
+              },
+              {
+                "group": "其他",
+                "pages": [
+                  "zh/v2/others/faq"
                 ]
               }
             ]
@@ -159,7 +199,11 @@
         {
           "language": "en",
           "default": true,
-          "href": "/",
+          "href": "/"
+        },
+        {
+          "language": "zh",
+          "href": "/zh"
         }
       ]
     }
