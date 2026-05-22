@@ -45,6 +45,10 @@
                 ]
               },
               {
+                "group": "API",
+                "openapi": "v2/deploy/openapi.json"
+              },
+              {
                 "group": "Others",
                 "pages": [
                   "v2/others/faq"
