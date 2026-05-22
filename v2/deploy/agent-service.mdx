@@ -1,6 +1,6 @@
 ---
 title: "Agent Service"
-description: "Host you agent as a multi-tenant, multi-session HTTP service"
+description: "Host your agent as a multi-tenant, multi-session HTTP service"
 ---
 
 Agent Service is the FastAPI-based hosting layer that turns AgentScope agents into a **multi-tenant, multi-session HTTP service**. It owns everything *around* the agent — request routing, per-user resource lifecycle, session state, persistence, scheduling, and tool offloading — so that the agent code you wrote against [`Agent`](/v2/building-blocks/agent) can serve production traffic without being rewritten.

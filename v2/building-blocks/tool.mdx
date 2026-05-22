@@ -191,7 +191,7 @@ Function tools default to `ASK` permission behavior — the user must explicitly
 
 An external execution tool is a tool whose actual execution happens outside the agent runtime — typically by a human operator or an external system. When the agent calls an external tool, it emits a `RequireExternalExecutionEvent` and pauses until the result is provided via `ExternalExecutionResultEvent`.
 
-This pattern is the foundation of the [human-in-the-loop](/v2/building-blocks/human-in-the-loop) workflow, where certain actions require human approval or manual execution.
+This pattern is the foundation of the [human-in-the-loop](/v2/building-blocks/agent) workflow, where certain actions require human approval or manual execution.
 
 To create an external execution tool, set `is_external_tool = True`. You do not need to implement `__call__`:
 

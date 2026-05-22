@@ -63,14 +63,14 @@ agent = Agent(
 )
 ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `trigger_ratio` | `0.8` | Context compression activates when token usage exceeds this ratio of the model's context size (max 0.9) |
-| `reserve_ratio` | `0.1` | Proportion of context tokens to keep as recent messages after compression |
-| `tool_result_limit` | `3000` | Maximum tokens per tool result; outputs exceeding this are truncated |
-| `compression_prompt` | *(built-in)* | The prompt that guides the model to generate the summary |
-| `summary_template` | *(built-in)* | String template for formatting the summary into the context |
-| `summary_schema` | `SummarySchema` | JSON Schema that constrains the model's structured summary output |
+| Parameter            | Default         | Description                                                                                                       |
+|----------------------|-----------------|-------------------------------------------------------------------------------------------------------------------|
+| `trigger_ratio`      | `0.8`           | Context compression activates when token usage exceeds this ratio of the model's context size (maximum value 0.9) |
+| `reserve_ratio`      | `0.1`           | Proportion of context tokens to keep as recent messages after compression                                         |
+| `tool_result_limit`  | `3000`          | Maximum tokens per tool result; outputs exceeding this are truncated                                              |
+| `compression_prompt` | *(built-in)*    | The prompt that guides the model to generate the summary                                                          |
+| `summary_template`   | *(built-in)*    | String template for formatting the summary into the context                                                       |
+| `summary_schema`     | `SummarySchema` | JSON Schema that constrains the model's structured summary output                                                 |
 
 ### Context Compression
 
