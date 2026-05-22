@@ -2,3 +2,743 @@
 title: "模型"
 description: "在 AgentScope 中配置并连接 LLM 模型提供商"
 ---
+
+## 概述
+
+AgentScope 的模型层为与各类 AI 模型提供商的交互提供了统一的抽象。其架构以 **Credential（凭证）** 为核心 —— 每个凭证代表特定提供商（OpenAI、Anthropic、DashScope、Gemini 等）的认证信息。基于单个凭证，你可以访问该提供商提供的不同类型的模型：用于文本生成与对话的 **Chat Model（对话模型）**、用于语音合成的 **TTS**，以及用于语音和流式交互的 **Realtime Model（实时模型）**。
+
+`CredentialBase` 的子类本质上是一个 Pydantic 模型，承载特定提供商的认证字段（例如 `api_key`、`base_url`），并通过 `get_chat_model_class()` 方法返回对应的 `ChatModelBase` 子类。创建一个凭证非常简单：
+
+```python
+import os
+from agentscope.credential import DashScopeCredential
+
+credential = DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"])
+```
+
+该凭证可以传递给任意模型的构造函数。你还可以通过 `DashScopeCredential.list_models()`（任意凭证类上均可用的类方法）来发现可用的模型。关于如何创建你自己的凭证和模型类，请参见 [自定义提供商](#自定义提供商)。
+
+一个关键的设计原则是：AgentScope 的模型层 **被设计为可自省的**（introspectable）—— 每个模型由一个 `ModelCard` 描述，声明式地刻画了其能力与约束（输入/输出模态、推理支持、参数范围）。这使得前端和工具可以仅依据 `ModelCard` 元数据动态渲染模型选择器、参数表单和功能开关，无需硬编码任何特定提供商的知识。详情参见 [与前端集成](#与前端集成)。
+
+## Chat Model
+
+### 什么是 Chat Model
+
+在 AgentScope 中，**Chat Model（对话模型）** 是与大语言模型交互的核心接口。它通过单一统一的 API，覆盖从简单文本生成到多轮对话、工具调用、推理以及结构化输出的全部场景。
+
+基类 `ChatModelBase` 定义了这一统一接口。每个提供商（OpenAI、Anthropic、DashScope 等）实现自己的子类，将通用 API 翻译为特定提供商的调用。作为用户，你无需关心这些差异 —— 无论使用哪个提供商，对外接口都保持一致。
+
+主要接口为 `__call__` 方法：
+
+```python
+async def __call__(
+    self,
+    messages: list[Msg],
+    tools: list[dict] | None = None,
+    tool_choice: ToolChoice | None = None,
+    **kwargs: Any,
+) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+```
+
+<ParamField path="messages" type="list[Msg]" required>
+  表示对话历史的 `Msg` 对象列表。
+</ParamField>
+
+<ParamField path="tools" type="list[dict] | None">
+  可选的工具 schema 列表，采用 JSON Schema 格式。
+</ParamField>
+
+<ParamField path="tool_choice" type="ToolChoice | None">
+  控制工具调用行为（`auto`、`none`、`required` 或具体的工具名称）。
+</ParamField>
+
+你传入 `Msg` 对象，得到统一的 `ChatResponse`。模型内部通过其内置的 formatter 处理所有特定提供商的消息格式化工作。
+
+### 支持的提供商
+
+AgentScope 当前支持以下对话模型提供商：
+
+| 提供商 | 模型类 | 凭证 | 亮点 |
+|----------|-------------|------------|------------|
+| OpenAI | `OpenAIChatModel` | `OpenAICredential` | Chat Completions API，兼容 vLLM 及 OpenAI 兼容端点 |
+| OpenAI (Responses) | `OpenAIResponseModel` | `OpenAICredential` | Responses API，原生支持推理（o3、o4-mini） |
+| Anthropic | `AnthropicChatModel` | `AnthropicCredential` | Claude 模型，支持扩展思考与提示缓存 |
+| DashScope | `DashScopeChatModel` | `DashScopeCredential` | Qwen 模型，多模态（视觉/音频/视频）、推理 |
+| DeepSeek | `DeepSeekChatModel` | `DeepSeekCredential` | OpenAI 兼容，带提示缓存命中 token 统计 |
+| Gemini | `GeminiChatModel` | `GeminiCredential` | Google Gemini 模型，支持多模态 |
+| Moonshot | `MoonshotChatModel` | `MoonshotCredential` | Kimi 模型（OpenAI 兼容） |
+| xAI | `XAIChatModel` | `XAICredential` | Grok 模型，原生支持 reasoning effort |
+| Ollama | `OllamaChatModel` | `OllamaCredential` | 本地 LLM 托管，凭证为可选 |
+
+### 创建 Chat Model 实例
+
+每个对话模型都遵循相同的构造模式：提供一个 **Credential**、一个 **模型名称**，以及可选的 **参数** 和其他设置。
+
+```python
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
+
+model = DashScopeChatModel(
+    credential=DashScopeCredential(
+        api_key=os.environ["DASHSCOPE_API_KEY"],
+    ),
+    model="qwen3.6-plus",
+    stream=True,
+    context_size=1_000_000,
+    parameters=DashScopeChatModel.Parameters(
+        thinking_enable=True,
+        max_tokens=4096,
+        temperature=0.7,
+    ),
+)
+```
+
+所有模型构造函数都接受以下通用参数：
+
+| 参数 | 类型 | 默认值 | 描述 |
+|----------|------|---------|-------------|
+| `credential` | `CredentialBase` | — | 包含 API key 的特定提供商凭证 |
+| `model` | `str` | — | 模型标识符（例如 `"gpt-5.4"`、`"qwen3.6-plus"`） |
+| `parameters` | `Parameters \| None` | `None` | 特定提供商参数（见下文） |
+| `stream` | `bool` | `True` | 启用流式输出 |
+| `max_retries` | `int` | `3` | API 调用失败时的最大重试次数 |
+| `context_size` | `int` | `32768` | 用于上下文压缩的上下文窗口大小 |
+| `formatter` | `FormatterBase \| None` | 提供商默认 | 自定义 formatter，覆盖默认的消息转换 |
+
+每个提供商都定义了一个 `Parameters` 内部类用于特定提供商的选项。常见参数包括 `max_tokens`、`temperature`、`top_p` 和 `thinking_enable` —— 完整的各提供商参数参考请见 [思考 / 非思考](#思考--非思考)。
+
+### 使用 Chat Model 实例
+
+#### 基本用法
+
+使用 `Msg` 对象列表调用模型。当 `stream=False` 时，`__call__` 直接返回一个 `ChatResponse`。
+
+```python
+import asyncio
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
+from agentscope.message import UserMsg
+
+async def basic_call():
+    credential = DashScopeCredential(
+        api_key=os.environ["DASHSCOPE_API_KEY"],
+    )
+    model = DashScopeChatModel(
+        credential=credential,
+        model="qwen3.6-plus",
+        stream=False,
+    )
+
+    user_msg = UserMsg(name="user", content="Hi!")
+    response = await model([user_msg])
+
+    print(response.content)
+    print(response.usage)
+
+asyncio.run(basic_call())
+```
+
+<Tip>
+模型在内部处理格式化 —— 你直接传入 `Msg` 对象，内置 formatter 将其转换为提供商的 API 格式。在使用 `Agent` 时，Agent 会自动管理完整的 `Msg → Model → ChatResponse` 流水线。
+</Tip>
+
+#### 流式 / 非流式
+
+设置 `stream=True` 即可启用流式。`__call__` 方法返回一个 `AsyncGenerator[ChatResponse, None]`，逐步产出增量（delta）数据块。
+
+<Note>
+AgentScope 使用 **delta 模式** 进行流式 —— 每个中间数据块只包含新生成的内容。最后一个数据块（`is_last=True`）包含完整累积的内容。
+</Note>
+
+```python
+async def streaming_call():
+    # 凭证和模型设置与上面相同，但 stream=True
+    model = DashScopeChatModel(
+        credential=DashScopeCredential(
+            api_key=os.environ["DASHSCOPE_API_KEY"],
+        ),
+        model="qwen3.6-plus",
+        stream=True,
+    )
+
+    user_msg = UserMsg(name="user", content="Count from 1 to 5.")
+    generator = await model([user_msg])
+
+    async for chunk in generator:
+        if chunk.is_last:
+            print("Final:", chunk.content)
+        else:
+            print(chunk.content)  # 增量内容
+
+asyncio.run(streaming_call())
+```
+
+展示 delta 模式的示例输出：
+
+```
+[TextBlock(type='text', text='1', id='...')]           # is_last=False (delta)
+[TextBlock(type='text', text=', 2,', id='...')]        # is_last=False (delta)
+[TextBlock(type='text', text=' 3, ', id='...')]        # is_last=False (delta)
+[TextBlock(type='text', text='4, 5', id='...')]        # is_last=False (delta)
+Final: [TextBlock(type='text', text='1, 2, 3, 4, 5', id='...')]  # is_last=True (累积)
+```
+
+#### 思考 / 非思考
+
+AgentScope 通过 `ThinkingBlock` 支持推理模型。当通过 `Parameters` 启用思考时，模型响应将同时包含思考过程和最终答案。
+
+```python
+async def reasoning_call():
+    model = DashScopeChatModel(
+        credential=DashScopeCredential(
+            api_key=os.environ["DASHSCOPE_API_KEY"],
+        ),
+        model="qwen3.6-plus",
+        stream=True,
+        parameters=DashScopeChatModel.Parameters(thinking_enable=True),
+    )
+
+    user_msg = UserMsg(name="user", content="What is 17 * 23?")
+    generator = await model([user_msg])
+
+    last_chunk = None
+    async for chunk in generator:
+        last_chunk = chunk
+
+    for block in last_chunk.content:
+        if hasattr(block, "thinking"):
+            print(f"[thinking] {block.thinking[:80]}...")
+        elif hasattr(block, "text"):
+            print(f"[text] {block.text}")
+
+asyncio.run(reasoning_call())
+```
+
+思考内容以与文本相同的 delta 模式进行流式传输。所有提供商共享统一的 `thinking_enable` 参数作为主要开关。部分提供商额外支持 `thinking_budget`（token 预算）或 `reasoning_effort`（思考强度）来控制推理深度：
+
+| 提供商 | 参数 | 备注 |
+|----------|-----------|-------|
+| Anthropic | `thinking_enable`、`thinking_budget` | 扩展思考；`thinking_budget` 单位为 token，且必须严格小于 `max_tokens`（如有必要 SDK 会自动扩展 `max_tokens`） |
+| OpenAI (Chat) | `thinking_enable`、`reasoning_effort` | `reasoning_effort`：`"none"`、`"minimal"`、`"low"`、`"medium"`、`"high"`、`"xhigh"` |
+| OpenAI (Responses) | `thinking_enable`、`reasoning_effort` | 取值同 OpenAI Chat |
+| DashScope | `thinking_enable`、`thinking_budget` | 支持 Qwen 推理模型 |
+| DeepSeek | `thinking_enable`、`reasoning_effort` | `reasoning_effort`：`"high"`、`"max"` |
+| Gemini | `thinking_enable`、`thinking_budget` | Google Gemini 推理模式 |
+| Moonshot | `thinking_enable` | 适用于 kimi-k2.6 和 kimi-k2-thinking 模型 |
+| xAI | `thinking_enable`、`reasoning_effort` | `reasoning_effort`：`"low"`、`"medium"`、`"high"` |
+| Ollama | `thinking_enable` | 支持 qwen3、deepseek-r1 等 |
+
+#### 工具 / tool_choice
+
+AgentScope 在所有提供商之间提供统一的工具调用接口。工具使用标准的 JSON Schema 格式定义。
+
+```python
+import asyncio
+import json
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
+from agentscope.tool import ToolChoice
+from agentscope.message import (
+    UserMsg, AssistantMsg, ToolCallBlock, ToolResultBlock, ToolResultState,
+)
+
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"The weather in {city} is sunny and 25°C."
+
+async def tool_call_example():
+    model = DashScopeChatModel(
+        credential=DashScopeCredential(
+            api_key=os.environ["DASHSCOPE_API_KEY"],
+        ),
+        model="qwen3.6-plus",
+        stream=False,
+    )
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get the current weather for a city.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "city": {"type": "string", "description": "The city name."},
+                    },
+                    "required": ["city"],
+                },
+            },
+        },
+    ]
+
+    # 步骤 1：模型决定调用工具
+    msgs = [UserMsg(name="user", content="What's the weather in Beijing?")]
+    response = await model(messages=msgs, tools=tools, tool_choice=ToolChoice(mode="auto"))
+
+    # 步骤 2：提取工具调用并执行
+    tool_calls = [b for b in response.content if isinstance(b, ToolCallBlock)]
+    if tool_calls:
+        tool_results = []
+        for tc in tool_calls:
+            args = json.loads(tc.input)
+            result = get_weather(**args)
+            tool_results.append(
+                ToolResultBlock(
+                    id=tc.id, name=tc.name, output=result, state=ToolResultState.SUCCESS,
+                ),
+            )
+
+        # 步骤 3：将工具结果反馈给模型并获取最终答案
+        msgs += [
+            AssistantMsg(name="assistant", content=response.content),
+            AssistantMsg(name="tool", content=tool_results),
+        ]
+        final_response = await model(messages=msgs)
+        print(final_response.content)
+
+asyncio.run(tool_call_example())
+```
+
+`ToolChoice` 控制模型如何使用工具：
+
+| 字段 | 类型 | 描述 |
+|-------|------|-------------|
+| `mode` | `Literal["auto", "none", "required"] \| str` | 控制工具调用行为 |
+| `tools` | `list[str] \| None` | 可选过滤器 —— 仅将这些工具 schema 转发给模型 |
+
+| 模式 | 描述 |
+|------|-------------|
+| `"auto"` | 模型自行决定是否调用工具 |
+| `"none"` | 不会调用任何工具 |
+| `"required"` | 模型必须至少调用一个工具 |
+| `"<tool_name>"` | 强制调用指定的工具 |
+
+<Tip>
+当需要强制调用单个工具时，优先使用 `mode="<tool_name>"` 而非 `tools=["<tool_name>"]` —— 前者可避免因 schema 列表变化导致的提示缓存失效。
+</Tip>
+
+<Tip>
+使用 `Toolkit` 类可从带有 docstring 的 Python 函数自动生成 JSON schema。详情参见 [工具](/v2/building-blocks/tool)。
+</Tip>
+
+#### 结构化输出
+
+AgentScope 通过 `generate_structured_output` 支持结构化输出，返回一个经过校验的 `StructuredResponse`，其 JSON 内容符合提供的 Pydantic 模型或 JSON schema。
+
+```python
+from pydantic import BaseModel
+
+class WeatherInfo(BaseModel):
+    city: str
+    temperature: float
+    unit: str
+
+async def structured_output_example():
+    model = DashScopeChatModel(
+        credential=DashScopeCredential(
+            api_key=os.environ["DASHSCOPE_API_KEY"],
+        ),
+        model="qwen3.6-plus",
+        stream=False,
+    )
+
+    response = await model.generate_structured_output(
+        messages=[UserMsg(name="user", content="What's the weather in Shanghai?")],
+        structured_model=WeatherInfo,
+    )
+
+    print(response.content)  # 与 WeatherInfo schema 匹配的、经过校验的字典
+
+asyncio.run(structured_output_example())
+```
+
+<Info>
+在底层，`generate_structured_output` 会基于提供的 JSON schema 合成一个强制工具调用，然后对模型响应进行校验和修复。
+</Info>
+
+#### 多模态输入
+
+AgentScope 使用 `DataBlock` 来表示二进制媒体（图像、音频、视频）。你用 `URLSource` 或 `Base64Source` 构造一个 `DataBlock`，然后将其与 `TextBlock` 一起放入 `Msg.content` 列表中。模型的 formatter 会自动将其转换为特定提供商的 API 格式。
+
+```python
+import asyncio
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
+from agentscope.message import UserMsg, TextBlock, DataBlock, URLSource, Base64Source
+
+async def multimodal_example():
+    model = DashScopeChatModel(
+        credential=DashScopeCredential(
+            api_key=os.environ["DASHSCOPE_API_KEY"],
+        ),
+        model="qwen3.6-plus",
+        stream=False,
+    )
+
+    # 通过 URL 提供图像
+    image_msg = UserMsg(
+        name="user",
+        content=[
+            TextBlock(text="What animal is in this image?"),
+            DataBlock(
+                source=URLSource(
+                    url="https://example.com/cat.jpg",
+                    media_type="image/jpeg",
+                ),
+            ),
+        ],
+    )
+    response = await model([image_msg])
+    print(response.content)
+
+asyncio.run(multimodal_example())
+```
+
+你可以通过三种源类型提供媒体：
+
+| 源 | 示例 |
+|--------|---------|
+| 远程 URL | `URLSource(url="https://example.com/photo.jpg", media_type="image/jpeg")` |
+| 本地文件 | `URLSource(url="file:///path/to/photo.jpg", media_type="image/jpeg")` |
+| Base64 数据 | `Base64Source(data="<base64-string>", media_type="image/jpeg")` |
+
+本地 `file://` URL 会被 formatter 自动从磁盘读取并转换为 base64。
+
+`media_type` 字段是标准的 MIME 类型字符串，决定 formatter 如何序列化该数据块。不同提供商支持不同的模态：
+
+| 提供商 | 支持的输入模态 |
+|----------|--------------------------|
+| DashScope | `image/*`、`audio/*`、`video/*` |
+| Gemini | `image/*`、`audio/*`、`video/*` |
+| OpenAI | `image/*`、`audio/*` |
+| Moonshot | `image/*`、`audio/*` |
+| Anthropic | `image/*` |
+| Ollama | `image/*` |
+| xAI | `image/jpeg`、`image/png` |
+
+<Note>
+不受支持的媒体类型会被静默跳过并发出警告，而不会抛出异常。可检查模型的 `ModelCard.input_types` 以确认特定模型支持哪些模态。
+</Note>
+
+对于音频/视频输入，某些模型需要额外参数 —— 例如 DashScope Omni 模型需要 `modalities=["text", "audio"]`：
+
+```python
+audio_msg = UserMsg(
+    name="user",
+    content=[
+        TextBlock(text="What is being said in this audio?"),
+        DataBlock(
+            source=URLSource(url="https://example.com/speech.wav", media_type="audio/wav"),
+        ),
+    ],
+)
+response = await model([audio_msg], modalities=["text", "audio"])
+```
+
+#### 响应对象
+
+所有对话模型调用都返回 `ChatResponse`，一个统一的响应对象：
+
+| 字段 | 类型 | 描述 |
+|-------|------|-------------|
+| `content` | `Sequence[TextBlock \| ToolCallBlock \| ThinkingBlock \| DataBlock]` | 响应内容块 |
+| `is_last` | `bool` | 在流式场景中为最后一个数据块时、或在非流式场景中为唯一响应时为 `True` |
+| `id` | `str` | 唯一响应标识符 |
+| `created_at` | `str` | ISO 8601 创建时间戳 |
+| `type` | `Literal["chat_response"]` | 始终为 `"chat_response"` |
+| `usage` | `ChatUsage \| None` | Token 使用信息（见下文） |
+| `metadata` | `dict[str, Any]` | 额外的响应元数据 |
+
+`ChatUsage` 记录单次模型 API 调用的 token 消耗与耗时：
+
+| 字段 | 类型 | 默认值 | 描述 |
+|-------|------|---------|-------------|
+| `input_tokens` | `int` | — | 输入 token 数 |
+| `output_tokens` | `int` | — | 输出 token 数 |
+| `time` | `float` | — | 耗时（秒） |
+| `type` | `Literal["chat"]` | `"chat"` | 始终为 `"chat"` |
+| `cache_creation_input_tokens` | `int` | `0` | 用于创建提示缓存的输入 token 数 |
+| `cache_input_tokens` | `int` | `0` | 从提示缓存读取的输入 token 数 |
+| `metadata` | `dict[str, Any] \| None` | `None` | 可选的元数据 |
+
+`ChatModelBase.__call__` 内置重试逻辑 —— 如果 API 调用失败，最多重试 `max_retries` 次（默认 3 次）后才抛出异常。每次重试会记录一条警告日志。
+
+### 与前端集成
+
+#### 什么是 ModelCard
+
+`ModelCard` 是对模型能力与约束的声明式描述。它的设计目的是服务前端 —— 使前端能够动态渲染模型选择器、参数表单和功能开关，无需硬编码任何特定提供商的知识。
+
+例如，前端可以使用 `ModelCard` 来：
+- 检查 `input_types` 决定是否显示图像上传按钮或视频输入选项。
+- 检查 `output_types` 是否包含 `application/x-thinking`，以决定是否显示"思考"开关。
+- 使用 `context_size` 和 `output_size` 显示模型限制并校验用户输入。
+- 将 `parameter_schema` 渲染为动态表单控件（`temperature` 的滑块、`thinking_enable` 的开关等），并按模型设定正确的取值范围和默认值。
+
+每个 `ModelCard` 包含：
+
+| 字段 | 类型 | 描述 |
+|-------|------|-------------|
+| `name` | `str` | 模型标识符（例如 `"claude-sonnet-4-6"`） |
+| `label` | `str` | 人类可读的显示名称（例如 `"Claude Sonnet 4.6"`） |
+| `status` | `"active" \| "deprecated" \| "sunset"` | 模型生命周期状态 |
+| `input_types` | `list[str]` | 支持的输入 MIME 类型 |
+| `output_types` | `list[str]` | 支持的输出 MIME 类型 |
+| `context_size` | `int` | 最大上下文窗口（token 数） |
+| `output_size` | `int` | 最大输出 token 数 |
+| `parameter_schema` | `dict` | 用于前端参数表单的 JSON Schema |
+
+`input_types` 和 `output_types` 使用 MIME 类型描述模型能力：
+
+| MIME 类型 | 含义 |
+|-----------|---------|
+| `text/plain` | 文本输入/输出 |
+| `application/x-thinking` | 思维链 / 推理 |
+| `image/jpeg`、`image/png`、`image/gif`、`image/webp` | 图像模态（通用） |
+| `image/bmp`、`image/tiff`、`image/heic` | 图像模态（DashScope） |
+| `audio/mp3`、`audio/wav`、`audio/flac` | 音频输入 |
+| `audio/wav` | 音频输出（例如 DashScope Omni） |
+| `video/mp4` | 视频输入 |
+
+例如，`claude-sonnet-4-6` 的 `ModelCard` 表示它支持文本和图像输入，并可产出文本和思考输出：
+
+```yaml
+name: claude-sonnet-4-6
+label: Claude Sonnet 4.6
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 65536
+```
+
+`parameter_schema` 由每个提供商的 `Parameters` 类自动生成，并与各模型的覆盖项合并 —— 这样前端就能为每个特定模型渲染精确的参数控件（滑块、开关、下拉框），并使用正确的取值范围和默认值。
+
+#### 如何获取 ModelCard
+
+你可以通过在凭证类或模型类上调用 `list_models()` 来获取模型卡片。在底层，`CredentialBase.list_models()` 会委托给其关联的 `ChatModelBase` 子类（通过 `get_chat_model_class()` 获取），后者会从其 `_models/` 目录加载 YAML 卡片定义。
+
+```python
+from agentscope.credential import DashScopeCredential
+from agentscope.model import AnthropicChatModel
+
+# 通过凭证类
+cards = DashScopeCredential.list_models()
+
+# 或直接在模型类上调用
+cards = AnthropicChatModel.list_models()
+
+for card in cards:
+    print(f"{card.name}: context={card.context_size}, inputs={card.input_types}")
+```
+
+凭证的 `get_chat_model_class()` 返回对应的 `ChatModelBase` 子类，后者知道在哪里查找其模型卡片 YAML 文件：
+
+```python
+model_cls = DashScopeCredential.get_chat_model_class()  # -> DashScopeChatModel
+cards = model_cls.list_models()                          # -> list[ModelCard]
+```
+
+这一设计使前端能够仅基于单个凭证发现可用模型、其能力以及合法的参数范围 —— 全程无需任何硬编码的提供商逻辑。
+
+## Formatter
+
+**Formatter（格式化器）** 是 AgentScope 的 `Msg` 对象与各提供商 API payload 格式之间的翻译层。每个对话模型都拥有一个 formatter，在 `_call_api` 中由模型内部调用，用于将 `list[Msg]` 转换为提供商 SDK 期望的 `list[dict]` 结构。
+
+每个提供商都附带两个 formatter 变体：
+
+| 变体 | 类命名模式 | 适用场景 |
+|---------|--------------|----------|
+| **ChatFormatter** | `OpenAIChatFormatter`、`DashScopeChatFormatter` 等 | 标准的单 Agent 对话。每个 `Msg` 与 API 消息一一对应。 |
+| **MultiAgentFormatter** | `OpenAIMultiAgentFormatter`、`DashScopeMultiAgentFormatter` 等 | 多 Agent 场景（辩论、审议等）。Agent 间消息会被聚合到 `<history>` 标签的文本块中，既保留每个参与者的身份，又保持 API payload 的合法性。 |
+
+默认情况下，每个模型都使用其 **ChatFormatter**。要切换到多 Agent 模式，只需在构造模型时传入 MultiAgent 变体 —— 无需修改任何 Agent 代码：
+
+```python
+import os
+from agentscope.model import OpenAIChatModel
+from agentscope.credential import OpenAICredential
+from agentscope.formatter import OpenAIMultiAgentFormatter
+
+model = OpenAIChatModel(
+    credential=OpenAICredential(api_key=os.environ["OPENAI_API_KEY"]),
+    model="gpt-4.1",
+    formatter=OpenAIMultiAgentFormatter(),
+)
+```
+
+两种变体的关键区别：
+
+- **ChatFormatter**：直接保留 `Msg` 的角色（user、assistant、system）。适用于标准的"用户—助手"对话，此时 API 原生的角色系统可以干净地映射到参与者。
+- **MultiAgentFormatter**：将连续的 Agent 消息分组，并用 `<history>` 标签包裹（带发送者名称），让模型看到连贯的多方上下文。工具调用/结果序列则通过内部委托给 ChatFormatter 来保持其原生 API 格式。
+
+所有提供商的 formatter 都继承自 `FormatterBase`，可从 `agentscope.formatter` 导入：
+
+```python
+from agentscope.formatter import (
+    FormatterBase,
+    DashScopeChatFormatter,
+    DashScopeMultiAgentFormatter,
+    AnthropicChatFormatter,
+    AnthropicMultiAgentFormatter,
+    # ... 共 9 个提供商 × 2 个变体
+)
+```
+
+## 自定义提供商
+
+你可以通过实现一个凭证和一个对话模型，并注册该凭证，来用自己的模型提供商扩展 AgentScope。
+
+### 步骤 1：定义 Credential
+
+继承 `CredentialBase`，使用唯一的 `type` 鉴别字段，并实现 `get_chat_model_class()`：
+
+```python
+from typing import Literal, Type, TYPE_CHECKING
+from pydantic import ConfigDict, Field, SecretStr
+from agentscope.credential import CredentialBase
+
+if TYPE_CHECKING:
+    from agentscope.model import ChatModelBase
+
+class MyProviderCredential(CredentialBase):
+    model_config = ConfigDict(title="My Provider API")
+    type: Literal["my_provider_credential"] = "my_provider_credential"
+
+    api_key: SecretStr = Field(description="API key for My Provider.")
+    base_url: str = Field(default="https://api.myprovider.com/v1")
+
+    @classmethod
+    def get_chat_model_class(cls) -> Type["ChatModelBase"]:
+        from .my_model import MyProviderChatModel
+        return MyProviderChatModel
+```
+
+### 步骤 2：实现 Chat Model
+
+继承 `ChatModelBase`，定义一个 `Parameters` 内部类，并实现 `_call_api`：
+
+```python
+from typing import Literal, Any, AsyncGenerator
+from pydantic import BaseModel, Field
+from agentscope.model import ChatModelBase, ChatResponse
+from agentscope.message import Msg
+from agentscope.tool import ToolChoice
+from agentscope.formatter import FormatterBase, OpenAIChatFormatter
+
+class MyProviderChatModel(ChatModelBase):
+    class Parameters(BaseModel):
+        max_tokens: int | None = Field(default=None, gt=0)
+        temperature: float | None = Field(default=None, ge=0, le=2)
+
+    type: Literal["my_provider_chat"] = "my_provider_chat"
+
+    def __init__(
+        self,
+        credential: "MyProviderCredential",
+        model: str,
+        parameters: Parameters | None = None,
+        stream: bool = True,
+        max_retries: int = 3,
+        context_size: int = 128000,
+        formatter: FormatterBase | None = None,
+    ) -> None:
+        super().__init__(
+            credential=credential,
+            model=model,
+            parameters=parameters or self.Parameters(),
+            stream=stream,
+            max_retries=max_retries,
+            context_size=context_size,
+        )
+        # 如果你的 API 遵循 OpenAI 格式，可复用 OpenAIChatFormatter；
+        # 否则请实现你自己的 FormatterBase 子类。
+        self.formatter = formatter or OpenAIChatFormatter()
+
+    async def _call_api(
+        self,
+        model_name: str,
+        messages: list[Msg],
+        tools: list[dict] | None = None,
+        tool_choice: ToolChoice | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        formatted_messages = await self.formatter.format(messages)
+        # 使用 self.credential.api_key 等调用你的提供商 API
+        ...
+```
+
+### 步骤 3：添加 Model Card（可选）
+
+在模型实现旁的 `_models/` 目录中创建 YAML 文件。这些文件可启用 `list_models()` 和前端模型发现：
+
+```yaml
+name: my-model-v1
+label: My Model V1
+status: active
+input_types:
+  - text/plain
+output_types:
+  - text/plain
+context_size: 128000
+output_size: 4096
+```
+
+### 步骤 4：注册并使用
+
+注册你的凭证，使 `CredentialFactory` 能够反序列化它：
+
+```python
+from agentscope.credential import CredentialFactory
+
+CredentialFactory.register_credential(MyProviderCredential)
+```
+
+如果你在使用 AgentScope 的 app 框架，则通过 `extra_credentials` 传入：
+
+```python
+from agentscope.app import create_app
+
+app = create_app(
+    storage=my_storage,
+    extra_credentials=[MyProviderCredential],
+)
+```
+
+然后就可以像使用任何内置提供商一样使用你的自定义提供商：
+
+```python
+model = MyProviderChatModel(
+    credential=MyProviderCredential(api_key="sk-..."),
+    model="my-model-v1",
+)
+response = await model([UserMsg(name="user", content="Hello!")])
+```
+
+## TTS
+
+<Tip>
+即将推出 —— 我们正在将 TTS 支持从 v1.0 迁移到 v2.0。
+</Tip>
+
+## Realtime Model
+
+<Tip>
+即将推出 —— 我们正在将 Realtime Model 支持从 v1.0 迁移到 v2.0。
+</Tip>
