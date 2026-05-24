@@ -185,6 +185,10 @@
                     ]
                   },
                   {
+                    "group": "API",
+                    "openapi": "v2/deploy/openapi.json"
+                  },
+                  {
                     "group": "其他",
                     "pages": [
                       "zh/v2/others/faq"
