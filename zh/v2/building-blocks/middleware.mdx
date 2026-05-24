@@ -1,422 +1,71 @@
 ---
-title: "中间件"
-description: "在关键生命周期节点拦截并扩展智能体行为"
+title: "Middleware"
+description: "在 agent 生命周期的关键位置拦截并扩展行为"
 ---
-
-中间件允许你将自定义逻辑 —— 日志、追踪、输入修改、访问控制等 —— 注入到智能体的执行流水线中，而无需修改智能体或模型代码。
 
 ## 概述
 
-AgentScope 的中间件系统提供 **5 个钩子（hook）** —— `on_reply`、`on_reasoning`、`on_acting`、`on_model_call` 和 `on_system_prompt` —— 覆盖了完整的智能体生命周期，从外层的回复流程一直到底层原始的模型 API 调用。每个中间件都是可选的：你只需实现自己需要的钩子，系统会在运行时自动检测哪些钩子被启用。
+Agent middleware 是在不修改 agent 或 model 代码的前提下，向 agent 执行流程中的关键位置注入自定义逻辑（日志、追踪、输入改写、访问控制等）的机制。
 
-钩子遵循两种模式：
+AgentScope 中，可以在 5 个位置上设置 hook，覆盖了从外层 reply 流程一路下沉到底层模型 API 调用的全链路：
 
-- **洋葱模式（Onion Pattern）**（4 个钩子）：`on_reply`、`on_reasoning`、`on_acting`、`on_model_call` —— 每一层都包裹下一层处理器，可在其前后插入逻辑，并观察流式数据。
-- **变换器模式（Transformer Pattern）**（1 个钩子）：`on_system_prompt` —— 中间件按顺序运行，每一个都对系统提示字符串进行变换，然后传递给下一个。
+| 位置 | 类型 | 说明 |
+|------|------|------|
+| `on_reply` | Onion | 包裹一次完整的 reply 流程，覆盖其中所有 ReAct 轮次、工具执行与最终输出 |
+| `on_reasoning` | Onion | 包裹一轮 ReAct 中的推理步骤（输入组装 → 模型调用 → 流式解码） |
+| `on_acting` | Onion | 包裹一次工具调用的执行 |
+| `on_model_call` | Onion | 包裹一次底层 `ChatModel` API 调用，最贴近模型 |
+| `on_system_prompt` | Transformer | 在每次组装 system prompt 时触发；多个 middleware 串行接力，每一个把上一个的输出再做一次变换 |
 
-下图展示了中间件钩子如何包裹智能体生命周期：
+两种类型的差别：
 
-```
-+------------------------------------------------------------------+
-| on_reply                                                         |
-|                                                                  |
-|  +------------------------------------------------------------+  |
-|  | on_reasoning                                               |  |
-|  |                                                            |  |
-|  |  +------------------------------------------------------+  |  |
-|  |  | on_model_call                                        |  |  |
-|  |  |   +-------------------------------+                  |  |  |
-|  |  |   | Model.__call__()              |                  |  |  |
-|  |  |   +-------------------------------+                  |  |  |
-|  |  +------------------------------------------------------+  |  |
-|  |                                                            |  |
-|  +------------------------------------------------------------+  |
-|                                                                  |
-|  +------------------------------------------------------------+  |
-|  | on_acting                                                  |  |
-|  |                                                            |  |
-|  |      +-------------------------------+                     |  |
-|  |      | Tool execution                |                     |  |
-|  |      +-------------------------------+                     |  |
-|  |                                                            |  |
-|  +------------------------------------------------------------+  |
-|                                                                  |
-| on_system_prompt: within compress_context & reasoning            |
-|                                                                  |
-+------------------------------------------------------------------+
-```
+- **Onion**（洋葱式）—— middleware 包裹下一层 handler，可以在 `next_handler()` 前后插入逻辑、观察中间事件流。
+- **Transformer**（变换式）—— middleware 之间串成流水线，前一个的输出作为后一个的输入，不存在「内层」概念。
 
+下图展示这些 hook 在 agent 生命周期中的嵌套关系。`on_system_prompt` 嵌入在 `on_reasoning` 内部，因为它在 reasoning 步骤组装 system prompt 时被触发：
 
-## 快速开始
+<Tree>
+  <Tree.Folder name="on_reply" defaultOpen>
+    <Tree.Folder name="ReAct loop（每一轮）" defaultOpen>
+      <Tree.Folder name="on_reasoning" defaultOpen>
+        <Tree.File name="on_system_prompt（组装 system prompt）" />
+        <Tree.File name="on_model_call（模型 API 调用）" />
+      </Tree.Folder>
+      <Tree.Folder name="on_acting（每个工具调用一次）" />
+    </Tree.Folder>
+  </Tree.Folder>
+</Tree>
 
-下面的示例创建了一个简单的中间件，在每次模型调用前后打印日志：
+<Note>
+当前 `on_acting` 只包裹 agent 运行时内部的工具执行；通过 external execution 在 agent 外部执行的工具不会被 `on_acting` 追踪到。
+</Note>
+
+## 装备 Middleware
+
+AgentScope 把一组 hook 装在一个类里 —— 同一个 middleware 类可以同时实现 5 个位置中任意子集的 hook。把实例传入 `Agent(middlewares=[...])` 即可装备：
 
 ```python
-from agentscope.middleware import MiddlewareBase
-from agentscope.agent import Agent
+from agentscope import Agent
+from agentscope.middleware import TracingMiddleware
 
-class LoggingMiddleware(MiddlewareBase):
-    """Log before and after model calls."""
-
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        print(f"[{agent.name}] Calling model...")
-        result = await next_handler()
-        print(f"[{agent.name}] Model call completed.")
-        return result
-
-# 假设 `model` 和 `toolkit` 已经配置好。
-# 配置说明参见 Model 和 Toolkit 的文档。
 agent = Agent(
     name="assistant",
     system_prompt="You are a helpful assistant.",
     model=model,
     toolkit=toolkit,
-    middlewares=[LoggingMiddleware()],
+    middlewares=[TracingMiddleware()],
 )
 ```
 
-## 钩子参考
+构造时 agent 会扫描每个 middleware 实例，按它实际实现了哪些 hook，把它分配到对应位置的执行列表中。未实现的位置自动跳过，不产生任何调用开销。
 
-### on_reply
+## 内置 Middleware
 
-拦截 **整个回复流程**，包括所有的推理轮次、工具执行以及最终的输出消息。
+### TracingMiddleware
 
-```python
-async def on_reply(
-    self,
-    agent: Agent,
-    input_kwargs: dict,
-    next_handler: Callable[..., AsyncGenerator],
-) -> AsyncGenerator:
-```
+`TracingMiddleware` 为 agent 全生命周期接入 [OpenTelemetry](https://opentelemetry.io/docs/specs/semconv/gen-ai/) 追踪。它在 `on_reply`、`on_model_call`、`on_acting` 三个位置打点，按层级生成 span。
 
-`input_kwargs` 字典包含以下键：
-
-| 键 | 类型 | 描述 |
-|-----|------|-------------|
-| `inputs` | 见下文 | 触发本次回复的统一输入 |
-
-`inputs` 的取值可以是以下之一：
-
-- **`Msg`** 或 **`list[Msg]`** —— 送入本次回复的新输入消息
-- **`UserConfirmResultEvent`** —— 用户批准或拒绝了一个待执行的工具调用（Human-in-the-Loop）
-- **`ExternalExecutionResultEvent`** —— 在智能体外部执行的工具结果
-- **`None`** —— 不带新输入直接恢复执行
-
-生成器会产出 `AgentEvent` 实例（状态更新、增量、工具调用）以及一个包含完整回复的最终 `Msg`。
-
-包裹 `next_handler()` 并产出其中的每一项，即可观察整个回复过程。不带参数调用 `next_handler()` 表示原样转发输入：
-
-```python
-class ReplyMiddleware(MiddlewareBase):
-    async def on_reply(self, agent, input_kwargs, next_handler):
-        print("Reply started")
-        async for item in next_handler():
-            yield item
-        print("Reply finished")
-```
-
-你也可以向 `next_handler(...)` 传入关键字参数以覆盖原始输入：
-
-```python
-from agentscope.message import Msg, UserMsg
-
-class ModifyInputMiddleware(MiddlewareBase):
-    async def on_reply(self, agent, input_kwargs, next_handler):
-        original = input_kwargs["inputs"]
-        if isinstance(original, Msg):
-            modified = UserMsg(
-                name=original.name,
-                content="[Modified] Describe the weather.",
-            )
-            async for item in next_handler(inputs=modified):
-                yield item
-        else:
-            async for item in next_handler():
-                yield item
-```
-
-### on_reasoning
-
-拦截单个 ReAct 轮次内的 **推理步骤** —— 包括输入准备、模型调用以及响应数据块解码。
-
-```python
-async def on_reasoning(
-    self,
-    agent: Agent,
-    input_kwargs: dict,
-    next_handler: Callable[..., AsyncGenerator],
-) -> AsyncGenerator:
-```
-
-`input_kwargs` 字典包含以下键：
-
-| 键 | 类型 | 描述 |
-|-----|------|-------------|
-| `tool_choice` | `ToolChoice \| None` | 本次推理步骤使用的 tool_choice 配置 |
-
-<CodeGroup>
-```python 基本用法
-class ReasoningMiddleware(MiddlewareBase):
-    async def on_reasoning(self, agent, input_kwargs, next_handler):
-        print("Reasoning started")
-        async for event in next_handler():
-            yield event
-        print("Reasoning finished")
-```
-
-```python 修改 tool_choice
-from agentscope.tool import ToolChoice
-
-class ForceNoToolMiddleware(MiddlewareBase):
-    """Prevent the model from calling tools."""
-
-    async def on_reasoning(self, agent, input_kwargs, next_handler):
-        async for event in next_handler(
-            tool_choice=ToolChoice(mode="none"),
-        ):
-            yield event
-```
-</CodeGroup>
-
-### on_acting
-
-拦截 **单次工具调用的执行**。在一个推理轮次内，每个工具调用都会触发一次。
-
-```python
-async def on_acting(
-    self,
-    agent: Agent,
-    input_kwargs: dict,
-    next_handler: Callable[..., AsyncGenerator],
-) -> AsyncGenerator:
-```
-
-`input_kwargs` 字典包含以下键：
-
-| 键 | 类型 | 描述 |
-|-----|------|-------------|
-| `tool_call` | `ToolCallBlock` | 待执行的工具调用，包含 `id`、`name`、`input`（原始 JSON 字符串）和 `state` |
-
-<Note>
-该钩子 **只** 包裹 `toolkit.call_tool()` 这一原始 I/O 层。权限检查、输入校验和上下文写入由智能体在该钩子之外处理。因此可以安全地将 `next_handler` 派发到后台任务中执行。但要注意：`is_state_injected=True` 的工具会接收到活跃的 `agent.state` 对象 —— 将这类工具派发到后台执行可能导致状态被并发修改。
-</Note>
-
-<CodeGroup>
-```python 基本用法
-class ToolLoggingMiddleware(MiddlewareBase):
-    async def on_acting(self, agent, input_kwargs, next_handler):
-        tool = input_kwargs["tool_call"]
-        print(f"Executing tool: {tool.name}")
-        async for event in next_handler():
-            yield event
-        print(f"Tool {tool.name} completed")
-```
-
-```python 拦截危险工具
-class SanitizeToolInputMiddleware(MiddlewareBase):
-    """Validate tool input before execution."""
-
-    BLOCKED_TOOLS = {"delete_database", "rm_rf"}
-
-    async def on_acting(self, agent, input_kwargs, next_handler):
-        tool_call = input_kwargs["tool_call"]
-        if tool_call.name in self.BLOCKED_TOOLS:
-            raise PermissionError(f"Tool '{tool_call.name}' is blocked")
-        async for event in next_handler():
-            yield event
-```
-</CodeGroup>
-
-### on_model_call
-
-拦截 **原始的模型 API 调用** —— 这是最底层的钩子，恰好位于真正的 `ChatModelBase.__call__()` 之上。
-
-与其他洋葱钩子产出（yield）异步生成器不同，`on_model_call` **返回（return）** 一个 `ChatResponse` 或 `AsyncGenerator[ChatResponse, None]`。
-
-```python
-async def on_model_call(
-    self,
-    agent: Agent,
-    input_kwargs: dict,
-    next_handler: Callable[
-        ...,
-        Awaitable[ChatResponse | AsyncGenerator[ChatResponse, None]],
-    ],
-) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-```
-
-`input_kwargs` 字典包含以下键：
-
-| 键 | 类型 | 描述 |
-|-----|------|-------------|
-| `messages` | `list[Msg]` | 已格式化、用于送入模型的消息 |
-| `tools` | `list[dict]` | 工具 schema |
-| `tool_choice` | `ToolChoice \| None` | tool_choice 配置 |
-| `current_model` | `ChatModelBase` | 本次调用使用的模型实例 |
-
-<CodeGroup>
-```python 非流式用法
-class TimingMiddleware(MiddlewareBase):
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        import time
-        start = time.time()
-        result = await next_handler()
-        elapsed = time.time() - start
-        print(f"Model call took {elapsed:.2f}s")
-        return result
-```
-
-```python 流式用法
-from agentscope.model import ChatResponse
-
-class StreamLoggingMiddleware(MiddlewareBase):
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        result = await next_handler()
-
-        if isinstance(result, ChatResponse):
-            return result
-
-        async def wrapped():
-            async for chunk in result:
-                print(f"Chunk: {chunk.is_last}")
-                yield chunk
-
-        return wrapped()
-```
-
-```python 修改模型输入
-from agentscope.message import Msg
-
-class InjectSystemMessageMiddleware(MiddlewareBase):
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        from agentscope.message import TextBlock
-        messages = [
-            Msg(name="system", content=[TextBlock(text="Extra instruction")], role="system"),
-        ] + input_kwargs["messages"]
-
-        # 只需传入需要覆盖的字段，
-        # 未指定的字段会保持原始值。
-        return await next_handler(messages=messages)
-```
-</CodeGroup>
-
-### on_system_prompt
-
-对 **系统提示字符串** 进行变换。与其他钩子不同，它采用 **变换器 / 流水线模式** —— 中间件依次执行，每一个都接收前一个的输出。
-
-```python
-async def on_system_prompt(
-    self,
-    agent: Agent,
-    current_prompt: str,
-) -> str:
-```
-
-```python
-class AppendContextMiddleware(MiddlewareBase):
-    async def on_system_prompt(self, agent, current_prompt):
-        return current_prompt + "\n\nCurrent time: 2025-01-01T00:00:00"
-```
-
-多个 `on_system_prompt` 中间件会从左到右依次应用：
-
-```python
-agent = Agent(
-    ...
-    middlewares=[mw1, mw2],  # prompt → mw1 → mw2 → final
-)
-```
-
-<Note>
-`on_system_prompt` 在 **每个推理轮次中会被调用两次**：一次发生在 `compress_context()` 进行 token 计数时，另一次发生在 `_reasoning_impl()` 构建实际模型输入时。在多步 ReAct 循环中，这一模式会在每一轮重复出现。
-</Note>
-
-## 执行顺序
-
-### 洋葱模式
-
-对于洋葱钩子（`on_reply`、`on_reasoning`、`on_acting`、`on_model_call`），**列表中的第一个中间件是最外层**：
-
-```python
-middlewares = [mw1, mw2]
-
-# 执行顺序：
-# mw1 前置 → mw2 前置 → [内部逻辑] → mw2 后置 → mw1 后置
-```
-
-对于以异步产出（yield）方式工作的钩子，内层中间件会先看到每一个产出的项：
-
-```
-mw1_pre → mw2_pre → mw2_event → mw1_event → ... → mw2_post → mw1_post
-```
-
-### 变换器模式
-
-对于 `on_system_prompt`，中间件 **从左到右依次执行**：
-
-```python
-middlewares = [mw1, mw2]
-
-# 执行过程：
-# original_prompt → mw1.on_system_prompt() → mw2.on_system_prompt() → final
-```
-
-## 组合多个钩子
-
-单个中间件可以实现多个钩子。系统会自动检测哪些钩子被覆盖，并将它们分别路由到相应的执行链。
-
-```python
-class FullObservabilityMiddleware(MiddlewareBase):
-    """Observe all lifecycle phases."""
-
-    async def on_reply(self, agent, input_kwargs, next_handler):
-        print(f"[reply] start for {agent.name}")
-        async for item in next_handler():
-            yield item
-        print(f"[reply] end for {agent.name}")
-
-    async def on_reasoning(self, agent, input_kwargs, next_handler):
-        print(f"[reasoning] start")
-        async for event in next_handler():
-            yield event
-        print(f"[reasoning] end")
-
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        print(f"[model_call] calling {input_kwargs['current_model'].model}")
-        result = await next_handler()
-        print(f"[model_call] done")
-        return result
-
-    async def on_system_prompt(self, agent, current_prompt):
-        print(f"[system_prompt] length={len(current_prompt)}")
-        return current_prompt
-
-agent = Agent(
-    ...
-    middlewares=[FullObservabilityMiddleware()],
-)
-```
-
-同一个中间件实例会出现在多个内部钩子列表中。在一次回复内，各钩子的执行顺序遵循智能体的生命周期：
-
-```
-on_reply
-  └── 对每个 ReAct 轮次：
-        ├── compress_context() → on_system_prompt（用于 token 计数）
-        ├── on_reasoning
-        │     ├── _prepare_model_input() → on_system_prompt
-        │     └── on_model_call
-        └── on_acting（本轮每个工具调用一次）
-```
-
-## 内置：TracingMiddleware
-
-AgentScope 提供了内置的 `TracingMiddleware`，可为完整的智能体生命周期 —— 回复、模型调用与工具执行 —— 添加 **OpenTelemetry 追踪**。它实现了三个钩子（`on_reply`、`on_model_call`、`on_acting`），并产生符合 [OpenTelemetry GenAI 语义约定](https://opentelemetry.io/docs/specs/semconv/gen-ai/) 的分层 span。
-
-### 配置
-
-在使用 `TracingMiddleware` 之前，先配置一个带 OTLP exporter 的 OpenTelemetry `TracerProvider`：
+使用前先在进程中注册 `TracerProvider` 与 OTLP 导出器：
 
 ```python
 from opentelemetry import trace
@@ -431,10 +80,10 @@ provider.add_span_processor(
 trace.set_tracer_provider(provider)
 ```
 
-然后将 `TracingMiddleware` 添加到你的智能体：
+随后把 `TracingMiddleware` 装到 agent 上即可：
 
 ```python
-from agentscope.agent import Agent
+from agentscope import Agent
 from agentscope.middleware import TracingMiddleware
 
 agent = Agent(
@@ -446,54 +95,141 @@ agent = Agent(
 )
 ```
 
-### Span 层级结构
-
-开启追踪后，每次智能体回复都会产生一棵嵌套的 span 树：
-
-```
-agent reply (on_reply)
-  ├── llm call (on_model_call)
-  ├── tool execution (on_acting)   ← 每个工具调用一次
-  ├── llm call (on_model_call)     ← 后续推理
-  └── ...
-```
-
-### 捕获的属性
+每次 reply 会产出一棵嵌套 span 树，每个层级捕获的关键属性如下：
 
 <Tabs>
-  <Tab title="智能体回复 Span">
-  通过 `on_reply` 捕获：
-  - 智能体名称、会话 ID、回复 ID
-  - 输入消息和最终输出消息
-  - Human-in-the-Loop (HITL) 待处理工具
-  - 外部执行的待处理工具
+  <Tab title="Agent Reply Span">
+  来自 `on_reply`：
+  - Agent 名称、session ID、reply ID
+  - 输入消息与最终输出消息
+  - HITL 等待中的工具调用
+  - External execution 等待中的工具调用
   </Tab>
   <Tab title="Model Call Span">
-  通过 `on_model_call` 捕获：
-  - 模型名称、提供商、输入 / 输出 token 数
-  - 请求 / 响应消息内容
-  - 支持流式：包裹异步生成器以捕获最后一个数据块
+  来自 `on_model_call`：
+  - 模型名、提供商、输入 / 输出 token 数
+  - 请求与响应的消息内容
+  - 对流式响应做包装，在最终 chunk 上写入属性
   </Tab>
   <Tab title="Tool Execution Span">
-  通过 `on_acting` 捕获：
-  - 工具名称、调用 ID、输入参数
+  来自 `on_acting`：
+  - 工具名、调用 ID、入参
   - 工具执行结果
   </Tab>
 </Tabs>
 
-### 未启用时零开销
-
-如果没有配置 `TracerProvider`，每个钩子都会以极低开销直接短路调用 `next_handler()` —— 不会创建 span，也不会计算属性。此外，智能体的 `is_implemented()` 检查会确保只有真正被 `TracingMiddleware` 覆盖的钩子才会被加入执行链，因此未实现的钩子完全没有开销。
+未配置 `TracerProvider` 时，所有 hook 会直接短路到 `next_handler()`，不创建 span 也不计算属性 —— 几乎零开销。
 
 <Info>
-当智能体收到 `ExternalExecutionResultEvent`（在智能体外部执行的工具结果）时，`TracingMiddleware` 会为每个外部执行的工具结果创建合成 span，即使工具运行在外部系统中也能保持完整的可观测性。
+Agent 收到 `ExternalExecutionResultEvent`（外部执行的工具结果）时，`TracingMiddleware` 会为每条外部执行结果合成一个补偿 span，让外部系统执行的工具也能保留完整可观测性。
 </Info>
+
+## 自定义 Middleware
+
+继承 `MiddlewareBase`，只实现需要的 hook 即可，其它的不用管。
+
+下面的示例用一个 middleware 覆盖了 4 个位置。每个 onion hook 都会收到一个 `input_kwargs` 字典，承载流入下一层的字段，通过 `next_handler(**input_kwargs)` 透传，也可以用关键字参数覆写其中某些字段：
+
+```python
+from typing import AsyncGenerator, Awaitable, Callable
+
+from agentscope import Agent
+from agentscope.event import AgentEvent
+from agentscope.message import Msg
+from agentscope.middleware import MiddlewareBase
+from agentscope.model import ChatResponse
+
+
+class FullObservabilityMiddleware(MiddlewareBase):
+    """同时观察 reply、reasoning、model_call、system_prompt 四个位置。"""
+
+    async def on_reply(
+        self,
+        agent: Agent,
+        # {"inputs": Msg | list[Msg] | UserConfirmResultEvent | ExternalExecutionResultEvent | None}
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator[AgentEvent | Msg, None]],
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+        print(f"[reply] start for {agent.name}")
+        async for item in next_handler(**input_kwargs):
+            yield item
+        print(f"[reply] end for {agent.name}")
+
+    async def on_reasoning(
+        self,
+        agent: Agent,
+        # {"tool_choice": ToolChoice | None}
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator[AgentEvent, None]],
+    ) -> AsyncGenerator[AgentEvent, None]:
+        print("[reasoning] start")
+        async for event in next_handler(**input_kwargs):
+            yield event
+        print("[reasoning] end")
+
+    async def on_model_call(
+        self,
+        agent: Agent,
+        # {"messages": list[Msg], "tools": list[dict], "tool_choice": ToolChoice | None, "current_model": ChatModelBase}
+        input_kwargs: dict,
+        next_handler: Callable[
+            ..., Awaitable[ChatResponse | AsyncGenerator[ChatResponse, None]]
+        ],
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        print(f"[model_call] {input_kwargs['current_model'].model}")
+        result = await next_handler(**input_kwargs)
+        print("[model_call] done")
+        return result
+
+    async def on_system_prompt(
+        self,
+        agent: Agent,
+        current_prompt: str,
+    ) -> str:
+        print(f"[system_prompt] length={len(current_prompt)}")
+        return current_prompt
+```
+
+### 执行顺序
+
+Onion 类 hook（`on_reply`、`on_reasoning`、`on_acting`、`on_model_call`）—— **列表中第一个 middleware 处于最外层**：
+
+```python
+middlewares = [mw1, mw2]
+# 调用顺序：
+# mw1 前 → mw2 前 → 内部逻辑 → mw2 后 → mw1 后
+```
+
+对于流式 / 产出事件的 hook，内层 middleware 先看到每一个 yield 出的事件：
+
+```
+mw1_pre → mw2_pre → mw2_event → mw1_event → ... → mw2_post → mw1_post
+```
+
+Transformer 类 hook（`on_system_prompt`）—— middleware **从左到右串行接力**：
+
+```python
+middlewares = [mw1, mw2]
+# original_prompt → mw1.on_system_prompt() → mw2.on_system_prompt() → final
+```
+
+一次 reply 中各 hook 的整体执行顺序遵循 agent 生命周期：
+
+```
+on_reply
+  └── 每一轮 ReAct：
+        ├── compress_context() → on_system_prompt（统计 token 时）
+        ├── on_reasoning
+        │     ├── _prepare_model_input() → on_system_prompt
+        │     └── on_model_call
+        └── on_acting（本轮每个工具调用一次）
+```
 
 ## 实用示例
 
-### 简单的计时中间件
+### 计时 middleware
 
-下面的中间件记录所有模型交互的耗时：
+下面的 middleware 记录每次模型调用的耗时：
 
 ```python
 import time
@@ -511,12 +247,13 @@ class TimingMiddleware(MiddlewareBase):
         return result
 ```
 
-### 限流中间件
+### 限速 middleware
 
-下面的中间件在模型调用之间强制保持一定的时间间隔：
+下面的 middleware 在两次模型调用之间强制留出最小间隔：
 
 ```python
 import asyncio
+import time
 from agentscope.middleware import MiddlewareBase
 
 class RateLimitMiddleware(MiddlewareBase):
@@ -525,7 +262,6 @@ class RateLimitMiddleware(MiddlewareBase):
         self._min_interval = min_interval
 
     async def on_model_call(self, agent, input_kwargs, next_handler):
-        import time
         now = time.time()
         wait = self._min_interval - (now - self._last_call)
         if wait > 0:
@@ -534,9 +270,9 @@ class RateLimitMiddleware(MiddlewareBase):
         return await next_handler()
 ```
 
-### 动态系统提示中间件
+### 动态 system prompt middleware
 
-下面的中间件向系统提示中注入实时上下文：
+下面的 middleware 在 system prompt 中注入实时上下文：
 
 ```python
 from datetime import datetime
@@ -560,9 +296,9 @@ agent = Agent(
 )
 ```
 
-### 模型回退中间件
+### 模型回退 middleware
 
-下面的中间件在主模型失败时切换到备用模型：
+下面的 middleware 在主模型失败时切换到备用模型：
 
 ```python
 from agentscope.middleware import MiddlewareBase
@@ -580,47 +316,3 @@ class ModelFallbackMiddleware(MiddlewareBase):
                 current_model=self._fallback,
             )
 ```
-
-## API 参考
-
-### MiddlewareBase
-
-```python
-class MiddlewareBase:
-    def is_implemented(self, hook_name: str) -> bool
-    async def on_reply(self, agent, input_kwargs, next_handler) -> AsyncGenerator
-    async def on_reasoning(self, agent, input_kwargs, next_handler) -> AsyncGenerator
-    async def on_acting(self, agent, input_kwargs, next_handler) -> AsyncGenerator
-    async def on_model_call(self, agent, input_kwargs, next_handler) -> ChatResponse | AsyncGenerator
-    async def on_system_prompt(self, agent, current_prompt) -> str
-```
-
-所有钩子默认会抛出 `RuntimeError`。`is_implemented()` 方法通过对比方法引用与 `MiddlewareBase` 中的定义，来判断子类是否覆盖了某个钩子。智能体在构造时利用这一信息构建独立的钩子列表，从而避免为未实现的钩子产生不必要的调用。
-
-### 智能体集成
-
-中间件通过 `Agent.__init__` 的 `middlewares` 参数进行配置：
-
-```python
-Agent(
-    name="assistant",
-    system_prompt="...",
-    model=model,
-    toolkit=toolkit,
-    middlewares=[mw1, mw2, mw3],  # 按顺序应用
-)
-```
-
-智能体内部会按所实现的钩子对中间件列表进行分组：
-
-| 内部列表 | 钩子 |
-|---------------|-------|
-| `_reply_middlewares` | 实现了 `on_reply` 的中间件 |
-| `_reasoning_middlewares` | 实现了 `on_reasoning` 的中间件 |
-| `_acting_middlewares` | 实现了 `on_acting` 的中间件 |
-| `_model_call_middlewares` | 实现了 `on_model_call` 的中间件 |
-| `_system_prompt_middlewares` | 实现了 `on_system_prompt` 的中间件 |
-
-<Info>
-为提升效率，这一分组操作在构造时 **只执行一次**。
-</Info>

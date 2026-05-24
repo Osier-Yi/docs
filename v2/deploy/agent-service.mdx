@@ -127,13 +127,16 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 ```python Docker sandbox
 import uvicorn
-from agentscope.app import create_app, RedisStorage, DockerWorkspaceManager
+from agentscope.app import create_app, RedisStorage
+from agentscope.app._manager import DockerWorkspaceManager
 
 # Persistence layer for agents, sessions, credentials, messages, and schedules.
 storage = RedisStorage(host="localhost", port=6379)
 
 # Each workspace runs inside its own local Docker container for isolation.
-workspace_manager = DockerWorkspaceManager()
+# Per-user/per-agent host workdirs live under `basedir` and are bind-mounted
+# into each container.
+workspace_manager = DockerWorkspaceManager(basedir="/data/docker-workspaces")
 
 app = create_app(storage=storage, workspace_manager=workspace_manager)
 uvicorn.run(app, host="0.0.0.0", port=8000)
@@ -141,12 +144,14 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 ```python E2B
 import uvicorn
-from agentscope.app import create_app, RedisStorage, E2BWorkspaceManager
+from agentscope.app import create_app, RedisStorage
+from agentscope.app._manager import E2BWorkspaceManager
 
 # Persistence layer for agents, sessions, credentials, messages, and schedules.
 storage = RedisStorage(host="localhost", port=6379)
 
 # Each workspace runs inside a remote E2B cloud sandbox.
+# Provide `api_key` here or set the `E2B_API_KEY` environment variable.
 workspace_manager = E2BWorkspaceManager()
 
 app = create_app(storage=storage, workspace_manager=workspace_manager)
@@ -169,6 +174,12 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 <ParamField path="extra_middlewares" type="list[Middleware] | None" default="None">
   Additional ASGI middlewares (e.g., protocol adapters, CORS, auth).
 </ParamField>
+<ParamField path="title" type="str" default="AgentScope">
+  OpenAPI title shown in the docs UI.
+</ParamField>
+<ParamField path="version" type="str" default="2.0.0">
+  API version shown in the docs UI.
+</ParamField>
 
 <Warning>
 The default `X-User-ID` header provides no authentication. Replace it with a real auth integration before deploying — see [User authentication](#user-authentication).
@@ -183,15 +194,15 @@ Once the server is running, drive it through the resources defined in the resour
     Register the agent's identity — display name, system prompt, and runtime configuration. The same agent can drive many sessions under different models.
 
     ```http
-    POST /agents
+    POST /agent
     ```
   </Step>
   <Step title="Create and configure a credential">
-    Discover each provider's form fields with `GET /credentials/schemas`, then save the API key. One credential can be reused across many sessions and agents.
+    Discover each provider's form fields with `GET /credential/schemas`, then save the API key. One credential can be reused across many sessions and agents.
 
     ```http
-    GET  /credentials/schemas
-    POST /credentials
+    GET  /credential/schemas
+    POST /credential
     ```
   </Step>
   <Step title="Create a session and select a model">
@@ -238,7 +249,7 @@ curl -N -X POST http://localhost:8000/chat \
 For a **scheduled run**, complete steps 1 and 2, then create a schedule that targets the agent — the scheduler creates the session (stateful or stateless) and triggers the run on the cron expression you provide. No `/chat` call is needed; the agent runs autonomously when the cron fires.
 
 ```http
-POST /schedules
+POST /schedule
 ```
 
 ## API Overview
@@ -250,14 +261,14 @@ The service exposes the resources from the resource model as REST endpoints, plu
 | Chat | `POST /chat` | Stream agent events for a session over SSE; supports replay and multi-subscriber fan-out. |
 | Sessions | `GET/POST/PATCH/DELETE /sessions` | Create and manage chat sessions, including model binding and permission level. |
 | Messages | `GET /sessions/{id}/messages` | Paginated message transcript for a session. |
-| Agents | `GET/POST/PATCH/DELETE /agents` | Manage agent records — display name, system prompt, runtime config. |
-| Credentials | `GET/POST/PATCH/DELETE /credentials` | CRUD for per-provider API keys and connection configs. |
-| Credential schemas | `GET /credentials/schemas` | Discover all registered credential types and their JSON parameter schemas for form rendering. |
-| Models | `GET /credentials/{id}/models` | List available models for a credential, with their declarative `ModelCard` (capabilities and parameter schemas). |
-| Schedules | `GET/POST/PATCH/DELETE /schedules` | Manage cron-based agent execution, stateful or stateless. |
+| Agents | `GET/POST/PATCH/DELETE /agent` | Manage agent records — display name, system prompt, runtime config. |
+| Credentials | `GET/POST/PATCH/DELETE /credential` | CRUD for per-provider API keys and connection configs. |
+| Credential schemas | `GET /credential/schemas` | Discover all registered credential types and their JSON parameter schemas for form rendering. |
+| Models | `GET /model?provider=<name>` | List candidate models for a provider, with their declarative `ModelCard` (capabilities and parameter schemas). |
+| Schedules | `GET/POST/PATCH/DELETE /schedule` | Manage cron-based agent execution, stateful or stateless. |
 | Background tasks | `GET /background-tasks` | Inspect offloaded tool executions. |
-| Workspace MCPs | `GET/POST /workspace/mcp`, `DELETE /workspace/mcp/{name}` | Manage MCP clients attached to the session's workspace. |
-| Workspace skills | `GET/POST /workspace/skill`, `DELETE /workspace/skill/{name}` | Manage skills available in the session's workspace. |
+| Workspace MCPs | `GET/POST /workspace/mcp`, `DELETE /workspace/mcp/{mcp_name}` | Manage MCP clients attached to the session's workspace. |
+| Workspace skills | `GET/POST /workspace/skill`, `DELETE /workspace/skill/{skill_name}` | Manage skills available in the session's workspace. |
 
 ## Customization
 
@@ -335,7 +346,7 @@ async def get_current_user_id(token: str = Depends(oauth2_scheme)) -> str:
 Wire your override by replacing the dependency on the FastAPI app:
 
 ```python
-from agentscope.app import get_current_user_id as default_dependency
+from agentscope.app._deps import get_current_user_id as default_dependency
 
 app.dependency_overrides[default_dependency] = get_current_user_id
 ```
@@ -354,6 +365,7 @@ Two independent axes are configurable:
 ```python
 from agentscope.app import WorkspaceManagerBase
 from agentscope.workspace import WorkspaceBase
+
 
 class PerSessionWorkspaceManager(WorkspaceManagerBase):
     async def get_workspace(
@@ -414,11 +426,11 @@ app = create_app(
 )
 ```
 
-The service automatically exposes the credential's JSON schema under `GET /credentials/schemas` and routes `GET /credentials/{id}/models` to the chat model class returned by `get_chat_model_class()`.
+The service automatically exposes the credential's JSON schema under `GET /credential/schemas`, and `GET /model?provider=<name>` routes to the chat model class returned by `get_chat_model_class()`.
 
 ### Provider models
 
-The model list returned by `GET /credentials/{id}/models` is built from `ModelCard` instances — declarative metadata records that tell the frontend how to display each model and what request parameters are valid. Each chat model exposes its catalog through `list_models()`, which by default loads `ModelCard` entries from YAML files in the provider's model directory; `ModelCard.from_yaml()` parses each YAML and merges its overrides into the base parameter schema supplied by the chat model's parameters class.
+The model list returned by `GET /model?provider=<name>` is built from `ModelCard` instances — declarative metadata records that tell the frontend how to display each model and what request parameters are valid. Each chat model exposes its catalog through `list_models()`, which by default loads `ModelCard` entries from YAML files in the provider's model directory; `ModelCard.from_yaml()` parses each YAML and merges its overrides into the base parameter schema supplied by the chat model's parameters class.
 
 A model card carries the following fields:
 
@@ -433,7 +445,7 @@ A model card carries the following fields:
 | `context_size` | Maximum context window in tokens. |
 | `output_size` | Maximum output tokens. |
 | `parameter_schema` | JSON schema for the request parameters, auto-merged with per-model overrides. |
-| `parameter_overrides` | Per-model deltas applied on top of the base parameter schema. |
+| `parameters_overrides` | Per-model deltas applied on top of the base parameter schema. |
 
 Example YAML for a multimodal model that accepts text, images, and video and emits text plus thinking traces:
 
@@ -464,7 +476,7 @@ parameter_overrides:
   max_tokens: {"maximum": 65536}
 ```
 
-To add a new model under an existing provider, drop a YAML file alongside the others in the provider's model directory — the loader picks it up automatically and the new entry shows up in `GET /credentials/{id}/models`.
+To add a new model under an existing provider, drop a YAML file alongside the others in the provider's model directory — the loader picks it up automatically and the new entry shows up in `GET /model?provider=<name>`.
 
 ### Storage backend
 
@@ -484,7 +496,8 @@ storage = RedisStorage(
 To use another database, implement the same interface:
 
 ```python
-from agentscope.app import StorageBase
+from agentscope.app.storage import StorageBase
+
 
 class PostgresStorage(StorageBase):
     async def __aenter__(self):

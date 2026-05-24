@@ -5,30 +5,105 @@ description: "Configure and connect LLM model providers in AgentScope"
 
 ## Overview
 
-AgentScope's model layer provides a unified abstraction for interacting with various AI model providers. The architecture is centered around **Credential** — each credential represents authentication information for a specific provider (OpenAI, Anthropic, DashScope, Gemini, etc.). From a single credential, you can access different types of models offered by that provider: **Chat Models** for text generation and conversation, **TTS** for text-to-speech, and **Realtime Models** for voice and streaming interactions.
+The model layer is organized as a two-tier hierarchy: a **Credential** at the top, and the model families a provider exposes beneath it — **Chat Model**, **TTS**, **Embedding**, and **Realtime Model**.
 
-A `CredentialBase` subclass is simply a Pydantic model holding provider-specific auth fields (e.g. `api_key`, `base_url`) and a `get_chat_model_class()` method that returns the corresponding `ChatModelBase` subclass. Creating one is straightforward:
+<Tree>
+  <Tree.Folder name="Credential" defaultOpen>
+    <Tree.Folder name="ChatModelBase" defaultOpen>
+      <Tree.File name="OpenAIChatModel" />
+      <Tree.File name="AnthropicChatModel" />
+      <Tree.File name="DashScopeChatModel" />
+      <Tree.File name="..." />
+    </Tree.Folder>
+    <Tree.Folder name="TTSModelBase (coming soon)" />
+    <Tree.Folder name="EmbeddingModelBase (coming soon)" />
+    <Tree.Folder name="RealtimeModelBase (coming soon)" />
+  </Tree.Folder>
+</Tree>
 
-```python
-import os
-from agentscope.credential import DashScopeCredential
+A **Credential** carries the API authentication fields a provider requires (`api_key`, `base_url`, ...). From a credential, you can retrieve the list of available models for each model family that provider supports.
 
-credential = DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"])
-```
-
-This credential can then be passed to any model constructor. You can also discover available models via `DashScopeCredential.list_models()` (a classmethod available on any credential class). See [Custom Provider](#custom-provider) for how to create your own credential and model classes.
-
-A key design principle is that AgentScope's model layer is **designed to be introspectable** — each model is described by a `ModelCard` that declaratively captures its capabilities and constraints (input/output modalities, reasoning support, parameter ranges). This enables frontends and tooling to dynamically render model selectors, parameter forms, and feature toggles purely from `ModelCard` metadata, without hardcoding any provider-specific knowledge. See [Integrate with Frontend](#integrate-with-frontend) for details.
+This layering mirrors the natural frontend flow — register a credential first, then pick a model from under it — letting the UI authenticate once and surface every model family the provider supports.
 
 ## Chat Model
 
-### What is Chat Model
+A **Chat Model** is the LLM that drives an agent's conversation and tool calls, accepting and producing multimodal content beyond plain text. AgentScope currently ships the following chat model classes:
 
-In AgentScope, a **Chat Model** is the core interface for interacting with large language models. It handles everything from simple text generation to multi-turn conversations, tool calling, reasoning, and structured output — all through a single unified API.
+| Provider | Model Class | Highlights |
+|----------|-------------|------------|
+| OpenAI | `OpenAIChatModel` | Chat Completions API, compatible with vLLM and OpenAI-compatible endpoints |
+| OpenAI (Responses) | `OpenAIResponseModel` | Responses API with native reasoning support (o3, o4-mini) |
+| Anthropic | `AnthropicChatModel` | Claude models with extended thinking and prompt caching |
+| DashScope | `DashScopeChatModel` | Qwen models, multimodal (vision/audio/video), reasoning |
+| DeepSeek | `DeepSeekChatModel` | OpenAI-compatible with prompt cache hit tokens |
+| Gemini | `GeminiChatModel` | Google Gemini models with multimodal support |
+| Moonshot | `MoonshotChatModel` | Kimi models (OpenAI-compatible) |
+| xAI | `XAIChatModel` | Grok models with native reasoning effort |
+| Ollama | `OllamaChatModel` | Local LLM hosting, credential is optional |
 
-The base class `ChatModelBase` defines this unified interface. Each provider (OpenAI, Anthropic, DashScope, etc.) implements its own subclass that translates the common API into provider-specific calls. As a user, you don't need to worry about these differences — the external interface remains identical regardless of which provider you're using.
+### Create Chat Model
 
-The primary interface is the `__call__` method:
+Every chat model takes a credential, a model name, and an optional provider-specific `Parameters` object. The three tabs below show typical setups for streaming, tool calling, and reasoning:
+
+<CodeGroup>
+```python Streaming
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
+
+model = DashScopeChatModel(
+    credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+    model="qwen-plus",
+    stream=True,
+)
+```
+
+```python Tools
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
+
+model = DashScopeChatModel(
+    credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+    model="qwen-plus",
+    stream=False,
+    parameters=DashScopeChatModel.Parameters(
+        parallel_tool_calls=False,
+    ),
+)
+```
+
+```python Reasoning
+import os
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
+
+model = DashScopeChatModel(
+    credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+    model="qwen3-235b-a22b-thinking-2507",
+    parameters=DashScopeChatModel.Parameters(
+        thinking_enable=True,
+        thinking_budget=2048,
+    ),
+)
+```
+</CodeGroup>
+
+Common constructor arguments shared by every chat model:
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `credential` | `CredentialBase` | Provider-specific credential |
+| `model` | `str` | Model identifier (e.g. `"qwen-plus"`) |
+| `parameters` | `Parameters \| None` | Provider-specific parameters such as `temperature`, `thinking_enable`, `parallel_tool_calls` |
+| `stream` | `bool` | Whether to stream output |
+| `max_retries` | `int` | Maximum API retries on failure |
+| `context_size` | `int` | Context window used for context compression |
+| `formatter` | `FormatterBase \| None` | Override message formatter |
+
+### Call Chat Model
+
+Invoke the model by calling it with a list of `Msg` objects, plus optional `tools` and `tool_choice`:
 
 ```python
 async def __call__(
@@ -40,79 +115,10 @@ async def __call__(
 ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
 ```
 
-<ParamField path="messages" type="list[Msg]" required>
-  A list of `Msg` objects representing the conversation history.
-</ParamField>
+The return type follows the model's `stream` setting:
 
-<ParamField path="tools" type="list[dict] | None">
-  Optional list of tool schemas in JSON Schema format.
-</ParamField>
-
-<ParamField path="tool_choice" type="ToolChoice | None">
-  Controls tool-calling behavior (`auto`, `none`, `required`, or a specific tool name).
-</ParamField>
-
-You pass in `Msg` objects and get back a unified `ChatResponse`. The model internally handles all provider-specific message formatting via its built-in formatter.
-
-### Supported Providers
-
-AgentScope currently supports the following chat model providers:
-
-| Provider | Model Class | Credential | Highlights |
-|----------|-------------|------------|------------|
-| OpenAI | `OpenAIChatModel` | `OpenAICredential` | Chat Completions API, compatible with vLLM and OpenAI-compatible endpoints |
-| OpenAI (Responses) | `OpenAIResponseModel` | `OpenAICredential` | Responses API with native reasoning support (o3, o4-mini) |
-| Anthropic | `AnthropicChatModel` | `AnthropicCredential` | Claude models with extended thinking and prompt caching |
-| DashScope | `DashScopeChatModel` | `DashScopeCredential` | Qwen models, multimodal (vision/audio/video), reasoning |
-| DeepSeek | `DeepSeekChatModel` | `DeepSeekCredential` | OpenAI-compatible with prompt cache hit tokens |
-| Gemini | `GeminiChatModel` | `GeminiCredential` | Google Gemini models with multimodal support |
-| Moonshot | `MoonshotChatModel` | `MoonshotCredential` | Kimi models (OpenAI-compatible) |
-| xAI | `XAIChatModel` | `XAICredential` | Grok models with native reasoning effort |
-| Ollama | `OllamaChatModel` | `OllamaCredential` | Local LLM hosting, credential is optional |
-
-### Creating a Chat Model Instance
-
-Every chat model follows the same construction pattern: provide a **Credential**, a **model name**, and optionally **parameters** and other settings.
-
-```python
-import os
-from agentscope.model import DashScopeChatModel
-from agentscope.credential import DashScopeCredential
-
-model = DashScopeChatModel(
-    credential=DashScopeCredential(
-        api_key=os.environ["DASHSCOPE_API_KEY"],
-    ),
-    model="qwen3.6-plus",
-    stream=True,
-    context_size=1_000_000,
-    parameters=DashScopeChatModel.Parameters(
-        thinking_enable=True,
-        max_tokens=4096,
-        temperature=0.7,
-    ),
-)
-```
-
-All model constructors accept these common arguments:
-
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `credential` | `CredentialBase` | — | Provider-specific credential containing API key |
-| `model` | `str` | — | Model identifier (e.g. `"gpt-5.4"`, `"qwen3.6-plus"`) |
-| `parameters` | `Parameters \| None` | `None` | Provider-specific parameters (see below) |
-| `stream` | `bool` | `True` | Enable streaming output |
-| `max_retries` | `int` | `3` | Maximum API call retries on failure |
-| `context_size` | `int` | `32768` | Context window size for context compression |
-| `formatter` | `FormatterBase \| None` | Provider default | Custom formatter override for message conversion |
-
-Each provider defines a `Parameters` inner class for provider-specific options. Common parameters include `max_tokens`, `temperature`, `top_p`, and `thinking_enable` — see [Thinking / Non-thinking](#thinking--non-thinking) for the full per-provider parameter reference.
-
-### Using a Chat Model Instance
-
-#### Basic Usage
-
-Call the model with a list of `Msg` objects. When `stream=False`, `__call__` returns a `ChatResponse` directly.
+- **`stream=False`** — awaits a single `ChatResponse` carrying the full output.
+- **`stream=True`** — awaits an `AsyncGenerator[ChatResponse, None]`. Intermediate chunks (`is_last=False`) carry only the **delta** generated in that step. So that callers don't have to accumulate deltas themselves, AgentScope appends one final chunk with `is_last=True` that carries the **full accumulated content**.
 
 ```python
 import asyncio
@@ -121,454 +127,81 @@ from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
 from agentscope.message import UserMsg
 
-async def basic_call():
-    credential = DashScopeCredential(
-        api_key=os.environ["DASHSCOPE_API_KEY"],
-    )
+async def main():
     model = DashScopeChatModel(
-        credential=credential,
-        model="qwen3.6-plus",
-        stream=False,
-    )
-
-    user_msg = UserMsg(name="user", content="Hi!")
-    response = await model([user_msg])
-
-    print(response.content)
-    print(response.usage)
-
-asyncio.run(basic_call())
-```
-
-<Tip>
-The model handles formatting internally — you pass in `Msg` objects directly, and the built-in formatter converts them to the provider's API format. When using an `Agent`, the Agent manages the full `Msg → Model → ChatResponse` pipeline automatically.
-</Tip>
-
-#### Streaming / Non-streaming
-
-Set `stream=True` to enable streaming. The `__call__` method returns an `AsyncGenerator[ChatResponse, None]` that yields delta chunks.
-
-<Note>
-AgentScope uses **delta mode** for streaming — each intermediate chunk contains only the newly generated content. The final chunk (`is_last=True`) contains the complete accumulated content.
-</Note>
-
-```python
-async def streaming_call():
-    # Same credential and model setup as above, but with stream=True
-    model = DashScopeChatModel(
-        credential=DashScopeCredential(
-            api_key=os.environ["DASHSCOPE_API_KEY"],
-        ),
-        model="qwen3.6-plus",
+        credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+        model="qwen-plus",
         stream=True,
     )
+    msgs = [UserMsg(name="user", content="Count from 1 to 5.")]
 
-    user_msg = UserMsg(name="user", content="Count from 1 to 5.")
-    generator = await model([user_msg])
-
-    async for chunk in generator:
+    async for chunk in await model(msgs):
         if chunk.is_last:
-            print("Final:", chunk.content)
+            print("Final:", chunk.content)   # full accumulated content
         else:
-            print(chunk.content)  # Delta content
+            print("Delta:", chunk.content)   # delta only
 
-asyncio.run(streaming_call())
+asyncio.run(main())
 ```
 
-Example output showing the delta pattern:
+A representative streaming trace, illustrating the delta-then-accumulated pattern:
 
 ```
-[TextBlock(type='text', text='1', id='...')]           # is_last=False (delta)
-[TextBlock(type='text', text=', 2,', id='...')]        # is_last=False (delta)
-[TextBlock(type='text', text=' 3, ', id='...')]        # is_last=False (delta)
-[TextBlock(type='text', text='4, 5', id='...')]        # is_last=False (delta)
-Final: [TextBlock(type='text', text='1, 2, 3, 4, 5', id='...')]  # is_last=True (accumulated)
+Delta: [TextBlock(text='1')]
+Delta: [TextBlock(text=', 2,')]
+Delta: [TextBlock(text=' 3, ')]
+Delta: [TextBlock(text='4, 5')]
+Final: [TextBlock(text='1, 2, 3, 4, 5')]
 ```
 
-#### Thinking / Non-thinking
+Each `ChatResponse` carries content blocks (`TextBlock`, `ThinkingBlock`, `ToolCallBlock`, `DataBlock`), an `is_last` flag, and a `ChatUsage` recording token counts and elapsed time.
 
-AgentScope supports reasoning models through `ThinkingBlock`. When thinking is enabled via `Parameters`, model responses include both the thinking process and the final answer.
+### Generate Structured Output
 
-```python
-async def reasoning_call():
-    model = DashScopeChatModel(
-        credential=DashScopeCredential(
-            api_key=os.environ["DASHSCOPE_API_KEY"],
-        ),
-        model="qwen3.6-plus",
-        stream=True,
-        parameters=DashScopeChatModel.Parameters(thinking_enable=True),
-    )
-
-    user_msg = UserMsg(name="user", content="What is 17 * 23?")
-    generator = await model([user_msg])
-
-    last_chunk = None
-    async for chunk in generator:
-        last_chunk = chunk
-
-    for block in last_chunk.content:
-        if hasattr(block, "thinking"):
-            print(f"[thinking] {block.thinking[:80]}...")
-        elif hasattr(block, "text"):
-            print(f"[text] {block.text}")
-
-asyncio.run(reasoning_call())
-```
-
-Thinking content streams in the same delta mode as text. All providers share the unified `thinking_enable` parameter as the primary toggle. Some providers additionally support `thinking_budget` (token budget) or `reasoning_effort` (effort level) to control the depth of reasoning:
-
-| Provider | Parameters | Notes |
-|----------|-----------|-------|
-| Anthropic | `thinking_enable`, `thinking_budget` | Extended thinking; `thinking_budget` is in tokens and must be strictly less than `max_tokens` (the SDK auto-expands `max_tokens` if needed) |
-| OpenAI (Chat) | `thinking_enable`, `reasoning_effort` | `reasoning_effort`: `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` |
-| OpenAI (Responses) | `thinking_enable`, `reasoning_effort` | Same values as OpenAI Chat |
-| DashScope | `thinking_enable`, `thinking_budget` | Supports Qwen reasoning models |
-| DeepSeek | `thinking_enable`, `reasoning_effort` | `reasoning_effort`: `"high"`, `"max"` |
-| Gemini | `thinking_enable`, `thinking_budget` | Google Gemini reasoning mode |
-| Moonshot | `thinking_enable` | For kimi-k2.6 and kimi-k2-thinking models |
-| xAI | `thinking_enable`, `reasoning_effort` | `reasoning_effort`: `"low"`, `"medium"`, `"high"` |
-| Ollama | `thinking_enable` | Supports qwen3, deepseek-r1, etc. |
-
-#### Tools / tool_choice
-
-AgentScope provides a unified tool-calling interface across all providers. Tools are defined using the standard JSON Schema format.
+When you need a JSON object that conforms to a Pydantic model or JSON schema, call `generate_structured_output` instead of `__call__`. It returns a `StructuredResponse` whose `content` is a validated dict matching the schema:
 
 ```python
 import asyncio
-import json
 import os
+from pydantic import BaseModel
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
-from agentscope.tool import ToolChoice
-from agentscope.message import (
-    UserMsg, AssistantMsg, ToolCallBlock, ToolResultBlock, ToolResultState,
-)
-
-def get_weather(city: str) -> str:
-    """Get the current weather for a city."""
-    return f"The weather in {city} is sunny and 25°C."
-
-async def tool_call_example():
-    model = DashScopeChatModel(
-        credential=DashScopeCredential(
-            api_key=os.environ["DASHSCOPE_API_KEY"],
-        ),
-        model="qwen3.6-plus",
-        stream=False,
-    )
-
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "description": "Get the current weather for a city.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "city": {"type": "string", "description": "The city name."},
-                    },
-                    "required": ["city"],
-                },
-            },
-        },
-    ]
-
-    # Step 1: Model decides to call a tool
-    msgs = [UserMsg(name="user", content="What's the weather in Beijing?")]
-    response = await model(messages=msgs, tools=tools, tool_choice=ToolChoice(mode="auto"))
-
-    # Step 2: Extract tool calls and execute them
-    tool_calls = [b for b in response.content if isinstance(b, ToolCallBlock)]
-    if tool_calls:
-        tool_results = []
-        for tc in tool_calls:
-            args = json.loads(tc.input)
-            result = get_weather(**args)
-            tool_results.append(
-                ToolResultBlock(
-                    id=tc.id, name=tc.name, output=result, state=ToolResultState.SUCCESS,
-                ),
-            )
-
-        # Step 3: Feed tool results back and get the final answer
-        msgs += [
-            AssistantMsg(name="assistant", content=response.content),
-            AssistantMsg(name="tool", content=tool_results),
-        ]
-        final_response = await model(messages=msgs)
-        print(final_response.content)
-
-asyncio.run(tool_call_example())
-```
-
-`ToolChoice` controls how the model uses tools:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `mode` | `Literal["auto", "none", "required"] \| str` | Controls tool-calling behavior |
-| `tools` | `list[str] \| None` | Optional filter — only forward these tool schemas to the model |
-
-| Mode | Description |
-|------|-------------|
-| `"auto"` | Model decides whether to call tools |
-| `"none"` | No tools will be called |
-| `"required"` | Model must call at least one tool |
-| `"<tool_name>"` | Force a specific tool to be called |
-
-<Tip>
-When forcing a single tool call, prefer `mode="<tool_name>"` over `tools=["<tool_name>"]` — the former avoids prompt cache invalidation caused by schema list changes.
-</Tip>
-
-<Tip>
-Use the `Toolkit` class to auto-generate JSON schemas from Python functions with docstrings. See [Tool](/v2/building-blocks/tool) for details.
-</Tip>
-
-#### Structured Output
-
-AgentScope supports structured output via `generate_structured_output`, which returns a validated `StructuredResponse` whose JSON content conforms to a provided Pydantic model or JSON schema.
-
-```python
-from pydantic import BaseModel
+from agentscope.message import UserMsg
 
 class WeatherInfo(BaseModel):
     city: str
     temperature: float
     unit: str
 
-async def structured_output_example():
+async def main():
     model = DashScopeChatModel(
-        credential=DashScopeCredential(
-            api_key=os.environ["DASHSCOPE_API_KEY"],
-        ),
-        model="qwen3.6-plus",
+        credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+        model="qwen-plus",
         stream=False,
     )
-
     response = await model.generate_structured_output(
         messages=[UserMsg(name="user", content="What's the weather in Shanghai?")],
         structured_model=WeatherInfo,
     )
+    print(response.content)  # validated dict matching WeatherInfo
 
-    print(response.content)  # Validated dict matching WeatherInfo schema
-
-asyncio.run(structured_output_example())
+asyncio.run(main())
 ```
 
 <Info>
-Under the hood, `generate_structured_output` synthesizes a forced tool call based on the provided JSON schema, then validates and repairs the model's response.
+`generate_structured_output` synthesizes a forced tool call from the schema, then validates and repairs the model's response.
 </Info>
 
-#### Multimodal Input
+### Formatter
 
-AgentScope uses `DataBlock` to represent binary media (images, audio, video). You construct a `DataBlock` with a `URLSource` or `Base64Source`, then include it in the `Msg.content` list alongside `TextBlock` entries. The model's formatter automatically converts it to the provider-specific API format.
+A **formatter** translates AgentScope's `Msg` objects into the `list[dict]` payload that each provider's API expects. It is configured via the optional `formatter` argument on the chat model constructor. Every provider ships two built-in variants:
 
-```python
-import asyncio
-import os
-from agentscope.model import DashScopeChatModel
-from agentscope.credential import DashScopeCredential
-from agentscope.message import UserMsg, TextBlock, DataBlock, URLSource, Base64Source
+| Variant | Use Case |
+|---------|----------|
+| **ChatFormatter** (default) | Standard single-agent dialog. Each `Msg` maps 1:1 to an API message, preserving native roles (`user`, `assistant`, `system`). |
+| **MultiAgentFormatter** | Multi-agent scenarios such as debate or moderation. Consecutive agent messages are grouped and wrapped in `<history>` tags with the sender's name, while tool call / result sequences keep their native API format. |
 
-async def multimodal_example():
-    model = DashScopeChatModel(
-        credential=DashScopeCredential(
-            api_key=os.environ["DASHSCOPE_API_KEY"],
-        ),
-        model="qwen3.6-plus",
-        stream=False,
-    )
-
-    # Image via URL
-    image_msg = UserMsg(
-        name="user",
-        content=[
-            TextBlock(text="What animal is in this image?"),
-            DataBlock(
-                source=URLSource(
-                    url="https://example.com/cat.jpg",
-                    media_type="image/jpeg",
-                ),
-            ),
-        ],
-    )
-    response = await model([image_msg])
-    print(response.content)
-
-asyncio.run(multimodal_example())
-```
-
-You can provide media via three source types:
-
-| Source | Example |
-|--------|---------|
-| Remote URL | `URLSource(url="https://example.com/photo.jpg", media_type="image/jpeg")` |
-| Local file | `URLSource(url="file:///path/to/photo.jpg", media_type="image/jpeg")` |
-| Base64 data | `Base64Source(data="<base64-string>", media_type="image/jpeg")` |
-
-Local `file://` URLs are automatically read from disk and converted to base64 by the formatter.
-
-The `media_type` field is a standard MIME type string that determines how the formatter serializes the block. Different providers support different modalities:
-
-| Provider | Supported Input Modalities |
-|----------|--------------------------|
-| DashScope | `image/*`, `audio/*`, `video/*` |
-| Gemini | `image/*`, `audio/*`, `video/*` |
-| OpenAI | `image/*`, `audio/*` |
-| Moonshot | `image/*`, `audio/*` |
-| Anthropic | `image/*` |
-| Ollama | `image/*` |
-| xAI | `image/jpeg`, `image/png` |
-
-<Note>
-Unsupported media types are silently skipped with a warning rather than raising an error. Check the model's `ModelCard.input_types` to verify which modalities a specific model supports.
-</Note>
-
-For audio/video input, some models require additional parameters — for example, DashScope Omni models need `modalities=["text", "audio"]`:
-
-```python
-audio_msg = UserMsg(
-    name="user",
-    content=[
-        TextBlock(text="What is being said in this audio?"),
-        DataBlock(
-            source=URLSource(url="https://example.com/speech.wav", media_type="audio/wav"),
-        ),
-    ],
-)
-response = await model([audio_msg], modalities=["text", "audio"])
-```
-
-#### Response Objects
-
-All chat model calls return `ChatResponse`, a unified response object:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `content` | `Sequence[TextBlock \| ToolCallBlock \| ThinkingBlock \| DataBlock]` | Response content blocks |
-| `is_last` | `bool` | `True` for the final chunk (streaming) or the only response (non-streaming) |
-| `id` | `str` | Unique response identifier |
-| `created_at` | `str` | ISO 8601 creation timestamp |
-| `type` | `Literal["chat_response"]` | Always `"chat_response"` |
-| `usage` | `ChatUsage \| None` | Token usage information (see below) |
-| `metadata` | `dict[str, Any]` | Additional response metadata |
-
-`ChatUsage` records token consumption and timing for a model API call:
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `input_tokens` | `int` | — | Number of input tokens |
-| `output_tokens` | `int` | — | Number of output tokens |
-| `time` | `float` | — | Time elapsed in seconds |
-| `type` | `Literal["chat"]` | `"chat"` | Always `"chat"` |
-| `cache_creation_input_tokens` | `int` | `0` | Input tokens used to create prompt cache |
-| `cache_input_tokens` | `int` | `0` | Input tokens read from prompt cache |
-| `metadata` | `dict[str, Any] \| None` | `None` | Optional metadata |
-
-`ChatModelBase.__call__` has built-in retry logic — if an API call fails, it retries up to `max_retries` times (default: 3) before raising the exception. Each retry logs a warning.
-
-### Integrate with Frontend
-
-#### What is ModelCard
-
-`ModelCard` is a declarative description of a model's capabilities and constraints. It is designed to serve the frontend — enabling dynamic rendering of model selectors, parameter forms, and feature toggles without hardcoding any provider-specific knowledge.
-
-For example, the frontend can use `ModelCard` to:
-- Check `input_types` to decide whether to show an image upload button or video input option.
-- Check `output_types` for `application/x-thinking` to determine whether to display a "thinking" toggle.
-- Use `context_size` and `output_size` to display model limits and validate user input.
-- Render `parameter_schema` as dynamic form controls (sliders for `temperature`, toggles for `thinking_enable`, etc.) with correct ranges and defaults per model.
-
-Each `ModelCard` contains:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `str` | Model identifier (e.g. `"claude-sonnet-4-6"`) |
-| `label` | `str` | Human-readable display name (e.g. `"Claude Sonnet 4.6"`) |
-| `status` | `"active" \| "deprecated" \| "sunset"` | Model lifecycle status |
-| `input_types` | `list[str]` | Supported input MIME types |
-| `output_types` | `list[str]` | Supported output MIME types |
-| `context_size` | `int` | Maximum context window in tokens |
-| `output_size` | `int` | Maximum output tokens |
-| `parameter_schema` | `dict` | JSON Schema for frontend parameter forms |
-
-The `input_types` and `output_types` use MIME types to describe model capabilities:
-
-| MIME Type | Meaning |
-|-----------|---------|
-| `text/plain` | Text input/output |
-| `application/x-thinking` | Chain-of-thought / reasoning |
-| `image/jpeg`, `image/png`, `image/gif`, `image/webp` | Image modalities (common) |
-| `image/bmp`, `image/tiff`, `image/heic` | Image modalities (DashScope) |
-| `audio/mp3`, `audio/wav`, `audio/flac` | Audio input |
-| `audio/wav` | Audio output (e.g. DashScope Omni) |
-| `video/mp4` | Video input |
-
-For example, a `ModelCard` for `claude-sonnet-4-6` indicates it supports text and image inputs, and can produce both text and thinking outputs:
-
-```yaml
-name: claude-sonnet-4-6
-label: Claude Sonnet 4.6
-status: active
-
-input_types:
-  - text/plain
-  - application/x-thinking
-  - image/jpeg
-  - image/png
-  - image/gif
-  - image/webp
-
-output_types:
-  - text/plain
-  - application/x-thinking
-
-context_size: 1000000
-output_size: 65536
-```
-
-The `parameter_schema` is automatically generated from each provider's `Parameters` class and merged with per-model overrides — so the frontend can render accurate parameter controls (sliders, toggles, dropdowns) with correct ranges and defaults for each specific model.
-
-#### How to Retrieve ModelCards
-
-You retrieve model cards by calling `list_models()` on either the credential class or the model class. Internally, `CredentialBase.list_models()` delegates to its linked `ChatModelBase` subclass (obtained via `get_chat_model_class()`), which loads YAML card definitions from its `_models/` directory.
-
-```python
-from agentscope.credential import DashScopeCredential
-from agentscope.model import AnthropicChatModel
-
-# Via credential class
-cards = DashScopeCredential.list_models()
-
-# Or directly on the model class
-cards = AnthropicChatModel.list_models()
-
-for card in cards:
-    print(f"{card.name}: context={card.context_size}, inputs={card.input_types}")
-```
-
-The credential's `get_chat_model_class()` returns the corresponding `ChatModelBase` subclass, which in turn knows where to find its model card YAML files:
-
-```python
-model_cls = DashScopeCredential.get_chat_model_class()  # -> DashScopeChatModel
-cards = model_cls.list_models()                          # -> list[ModelCard]
-```
-
-This design allows the frontend to discover available models, their capabilities, and valid parameter ranges — all from a single credential, without any hardcoded provider logic.
-
-## Formatter
-
-A **Formatter** is the translation layer between AgentScope's `Msg` objects and each provider's API payload format. Every chat model owns a formatter, which is called internally during `_call_api` to convert `list[Msg]` into the `list[dict]` structure expected by the provider's SDK.
-
-Each provider ships two formatter variants:
-
-| Variant | Class Pattern | Use Case |
-|---------|--------------|----------|
-| **ChatFormatter** | `OpenAIChatFormatter`, `DashScopeChatFormatter`, etc. | Standard single-agent dialog. Each `Msg` maps 1:1 to an API message. |
-| **MultiAgentFormatter** | `OpenAIMultiAgentFormatter`, `DashScopeMultiAgentFormatter`, etc. | Multi-agent scenarios (debate, moderation, etc.). Agent-to-agent messages are collapsed into `<history>` tagged text blocks, preserving each participant's identity while keeping the API payload valid. |
-
-By default, every model uses its **ChatFormatter**. To switch to multi-agent mode, pass the MultiAgent variant when constructing the model — no agent code changes are required:
+Switch to multi-agent mode by passing the MultiAgent variant — no agent code changes are required:
 
 ```python
 import os
@@ -583,29 +216,13 @@ model = OpenAIChatModel(
 )
 ```
 
-The key difference between the two variants:
+For non-standard payload shapes (e.g. a provider whose API doesn't follow the OpenAI or Anthropic conventions), subclass `FormatterBase` and pass an instance through the same `formatter` argument.
 
-- **ChatFormatter**: preserves `Msg` roles directly (user, assistant, system). Works well for standard user–assistant conversations where the API's native role system maps cleanly to the participants.
-- **MultiAgentFormatter**: groups consecutive agent messages and wraps them in `<history>` tags with the sender's name, so the model sees a coherent multi-party context. Tool call/result sequences are kept in their native API format by delegating to the ChatFormatter internally.
-
-All provider formatters extend `FormatterBase` and are importable from `agentscope.formatter`:
-
-```python
-from agentscope.formatter import (
-    FormatterBase,
-    DashScopeChatFormatter,
-    DashScopeMultiAgentFormatter,
-    AnthropicChatFormatter,
-    AnthropicMultiAgentFormatter,
-    # ... all 9 providers × 2 variants
-)
-```
-
-## Custom Provider
+### Custom Provider
 
 You can extend AgentScope with your own model provider by implementing a credential and a chat model, then registering the credential.
 
-### Step 1: Define the Credential
+#### Step 1: Define the Credential
 
 Subclass `CredentialBase` with a unique `type` discriminator and implement `get_chat_model_class()`:
 
@@ -630,7 +247,7 @@ class MyProviderCredential(CredentialBase):
         return MyProviderChatModel
 ```
 
-### Step 2: Implement the Chat Model
+#### Step 2: Implement the Chat Model
 
 Subclass `ChatModelBase`, define a `Parameters` inner class, and implement `_call_api`:
 
@@ -684,9 +301,9 @@ class MyProviderChatModel(ChatModelBase):
         ...
 ```
 
-### Step 3: Add Model Cards (optional)
+#### Step 3: Add Model Cards (optional)
 
-Create YAML files in a `_models/` directory next to your model implementation. These enable `list_models()` and frontend model discovery:
+Drop YAML files into a `_models/` directory next to your model implementation. Each file describes one model — its capabilities (`input_types`, `output_types`), limits (`context_size`, `output_size`), and any per-model `parameter_overrides`:
 
 ```yaml
 name: my-model-v1
@@ -698,43 +315,123 @@ output_types:
   - text/plain
 context_size: 128000
 output_size: 4096
+parameter_overrides:
+  max_tokens: {"maximum": 4096}
 ```
 
-### Step 4: Register and Use
-
-Register your credential so `CredentialFactory` can deserialize it:
+`MyProviderChatModel.list_models()` then loads every YAML in that directory. To pull cards from a different location — for example, a registry your application maintains separately — pass `custom_yaml_dir`:
 
 ```python
-from agentscope.credential import CredentialFactory
-
-CredentialFactory.register_credential(MyProviderCredential)
+cards = MyProviderChatModel.list_models(custom_yaml_dir="/path/to/cards")
 ```
 
-If you're using the AgentScope app framework, pass it via `extra_credentials`:
+## Integrate with Frontend
+
+### What is ModelCard
+
+`ModelCard` is a declarative description of a model's capabilities and constraints, designed to drive the frontend — model selectors, parameter forms, and feature toggles can be rendered dynamically without hardcoding any provider-specific knowledge.
+
+Each `ModelCard` contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` | Model identifier (e.g. `"claude-sonnet-4-6"`) |
+| `label` | `str` | Human-readable display name (e.g. `"Claude Sonnet 4.6"`) |
+| `status` | `"active" \| "deprecated" \| "sunset"` | Model lifecycle status |
+| `input_types` | `list[str]` | Accepted input MIME types — used by the frontend to filter attachment uploads (e.g. only show an image button when `image/*` is supported) |
+| `output_types` | `list[str]` | Output MIME types the model can produce — advertises capabilities such as a thinking toggle when `application/x-thinking` is present |
+| `context_size` | `int` | Maximum context window in tokens |
+| `output_size` | `int` | Maximum output tokens |
+| `parameter_schema` | `dict` | Final JSON Schema for the parameter form — base schema merged with per-model overrides (see below) |
+| `parameters_overrides` | `dict[str, dict]` | The raw per-model overrides, before merging |
+
+`input_types` and `output_types` use MIME types to describe modality. Common values:
+
+| MIME Type | Meaning |
+|-----------|---------|
+| `text/plain` | Text |
+| `application/x-thinking` | Reasoning / chain-of-thought |
+| `image/*` (e.g. `image/png`, `image/jpeg`) | Image |
+| `audio/*` (e.g. `audio/wav`, `audio/mp3`) | Audio |
+| `video/*` (e.g. `video/mp4`) | Video |
+
+A typical YAML card for `claude-sonnet-4-6`:
+
+```yaml
+name: claude-sonnet-4-6
+label: Claude Sonnet 4.6
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 65536
+
+parameter_overrides:
+  max_tokens: {"maximum": 65536}
+```
+
+#### Parameter schema and overrides
+
+The `parameter_schema` exposed to the frontend is built in two layers:
+
+1. **Base schema** — auto-derived from the chat model's `Parameters` class via `model_json_schema()`. This lists every adjustable parameter (`temperature`, `max_tokens`, `thinking_enable`, ...) along with its type and the API-wide range.
+2. **Per-model overrides** — the YAML's `parameter_overrides` block is merged on top, field by field.
+
+Overrides matter because adjustable ranges are not uniform across an API: every Qwen model accepts `max_tokens`, but each one has a different ceiling. Overrides let a card tighten a range, pin a default, or hide a parameter that doesn't apply.
+
+| Override syntax | Effect |
+|-----------------|--------|
+| `param: { ... }` | Shallow-merge into the base field (e.g. `max_tokens: {maximum: 16384}`) |
+| `param: { hidden: true }` | Hide the parameter from the frontend |
+| `param: null` | Remove the parameter entirely |
+
+### Retrieve ModelCards
+
+You retrieve model cards by calling `list_models()` on either the credential class or the model class. Internally, `CredentialBase.list_models()` delegates to its linked `ChatModelBase` subclass (obtained via `get_chat_model_class()`), which loads YAML card definitions from its `_models/` directory.
 
 ```python
-from agentscope.app import create_app
+from agentscope.credential import DashScopeCredential
+from agentscope.model import AnthropicChatModel
 
-app = create_app(
-    storage=my_storage,
-    extra_credentials=[MyProviderCredential],
-)
+# Via credential class
+cards = DashScopeCredential.list_models()
+
+# Or directly on the model class
+cards = AnthropicChatModel.list_models()
+
+for card in cards:
+    print(f"{card.name}: context={card.context_size}, inputs={card.input_types}")
 ```
 
-Then use your custom provider like any built-in one:
+The credential's `get_chat_model_class()` returns the corresponding `ChatModelBase` subclass, which in turn knows where to find its model card YAML files:
 
 ```python
-model = MyProviderChatModel(
-    credential=MyProviderCredential(api_key="sk-..."),
-    model="my-model-v1",
-)
-response = await model([UserMsg(name="user", content="Hello!")])
+model_cls = DashScopeCredential.get_chat_model_class()  # -> DashScopeChatModel
+cards = model_cls.list_models()                          # -> list[ModelCard]
 ```
+
+This design allows the frontend to discover available models, their capabilities, and valid parameter ranges — all from a single credential, without any hardcoded provider logic.
 
 ## TTS
 
 <Tip>
 Coming soon — we are migrating TTS support from v1.0 to v2.0.
+</Tip>
+
+## Embedding
+
+<Tip>
+Coming soon — we are migrating Embedding support from v1.0 to v2.0.
 </Tip>
 
 ## Realtime Model

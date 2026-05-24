@@ -3,420 +3,69 @@ title: "Middleware"
 description: "Intercept and extend agent behavior at key lifecycle points"
 ---
 
-Middleware allows you to inject custom logic — logging, tracing, input modification, access control, and more — into an agent's execution pipeline without modifying the agent or model code.
-
 ## Overview
 
-AgentScope's middleware system provides **5 hooks** — `on_reply`, `on_reasoning`, `on_acting`, `on_model_call`, and `on_system_prompt` — covering the full Agent lifecycle, from the outer reply process down to the raw model API call. Each middleware is optional: you only implement the hooks you need, and the system automatically detects which hooks are active at runtime.
+Agent middleware is the mechanism for injecting custom logic — logging, tracing, input rewriting, access control — into key points of the agent execution pipeline, without modifying the agent or model code.
 
-The hooks follow two patterns:
+AgentScope exposes 5 hook positions, covering the full path from the outer reply process down to the raw model API call:
 
-- **Onion Pattern** (4 hooks): `on_reply`, `on_reasoning`, `on_acting`, `on_model_call` — each wraps the next handler, allowing before/after logic and stream observation.
-- **Transformer Pattern** (1 hook): `on_system_prompt` — middlewares run sequentially, each transforming the system prompt string and passing it to the next.
+| Position | Type | Description |
+|----------|------|-------------|
+| `on_reply` | Onion | Wraps a complete reply, covering all ReAct rounds, tool executions, and the final output |
+| `on_reasoning` | Onion | Wraps a single ReAct round's reasoning step (input assembly → model call → stream decoding) |
+| `on_acting` | Onion | Wraps a single tool call execution |
+| `on_model_call` | Onion | Wraps the underlying `ChatModel` API call — the closest to the model |
+| `on_system_prompt` | Transformer | Fires every time the system prompt is assembled; multiple middlewares chain in sequence, each transforming the previous one's output |
 
-The following diagram illustrates how middleware hooks wrap the agent lifecycle:
+The two types differ as follows:
 
-```
-+------------------------------------------------------------------+
-| on_reply                                                         |
-|                                                                  |
-|  +------------------------------------------------------------+  |
-|  | on_reasoning                                               |  |
-|  |                                                            |  |
-|  |  +------------------------------------------------------+  |  |
-|  |  | on_model_call                                        |  |  |
-|  |  |   +-------------------------------+                  |  |  |
-|  |  |   | Model.__call__()              |                  |  |  |
-|  |  |   +-------------------------------+                  |  |  |
-|  |  +------------------------------------------------------+  |  |
-|  |                                                            |  |
-|  +------------------------------------------------------------+  |
-|                                                                  |
-|  +------------------------------------------------------------+  |
-|  | on_acting                                                  |  |
-|  |                                                            |  |
-|  |      +-------------------------------+                     |  |
-|  |      | Tool execution                |                     |  |
-|  |      +-------------------------------+                     |  |
-|  |                                                            |  |
-|  +------------------------------------------------------------+  |
-|                                                                  |
-| on_system_prompt: within compress_context & reasoning            |
-|                                                                  |
-+------------------------------------------------------------------+
-```
+- **Onion** — middleware wraps the next handler, allowing logic before/after `next_handler()` and observation of the intermediate event stream.
+- **Transformer** — middlewares form a pipeline; the previous one's output feeds into the next one. There is no "inner layer" concept.
 
+The diagram below shows how these hooks nest within the agent lifecycle. `on_system_prompt` is embedded inside `on_reasoning` because it fires when the reasoning step assembles the system prompt:
 
-## Quick Start
+<Tree>
+  <Tree.Folder name="on_reply" defaultOpen>
+    <Tree.Folder name="ReAct loop (per round)" defaultOpen>
+      <Tree.Folder name="on_reasoning" defaultOpen>
+        <Tree.File name="on_system_prompt (system prompt assembly)" />
+        <Tree.File name="on_model_call (model API call)" />
+      </Tree.Folder>
+      <Tree.Folder name="on_acting (once per tool call)" />
+    </Tree.Folder>
+  </Tree.Folder>
+</Tree>
 
-The following example creates a simple middleware that logs before and after each model call:
+<Note>
+`on_acting` currently wraps only tool execution inside the agent runtime; tools dispatched outside the agent via external execution are not tracked by `on_acting`.
+</Note>
+
+## Equip Middleware
+
+AgentScope packages a set of hooks into a class — a single middleware class can implement any subset of the 5 hook positions at the same time. Pass instances to `Agent(middlewares=[...])` to equip them:
 
 ```python
-from agentscope.middleware import MiddlewareBase
-from agentscope.agent import Agent
+from agentscope import Agent
+from agentscope.middleware import TracingMiddleware
 
-class LoggingMiddleware(MiddlewareBase):
-    """Log before and after model calls."""
-
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        print(f"[{agent.name}] Calling model...")
-        result = await next_handler()
-        print(f"[{agent.name}] Model call completed.")
-        return result
-
-# Assumes `model` and `toolkit` are already configured.
-# See the Model and Toolkit docs for setup instructions.
 agent = Agent(
     name="assistant",
     system_prompt="You are a helpful assistant.",
     model=model,
     toolkit=toolkit,
-    middlewares=[LoggingMiddleware()],
+    middlewares=[TracingMiddleware()],
 )
 ```
 
-## Hook Reference
+At construction time the agent scans each middleware instance, checks which hooks it actually implements, and routes it into the matching position-specific execution lists. Unimplemented positions are skipped automatically with no call overhead.
 
-### on_reply
+## Built-in Middleware
 
-Intercepts the **entire reply process**, including all reasoning rounds, tool executions, and the final output message.
+### TracingMiddleware
 
-```python
-async def on_reply(
-    self,
-    agent: Agent,
-    input_kwargs: dict,
-    next_handler: Callable[..., AsyncGenerator],
-) -> AsyncGenerator:
-```
+`TracingMiddleware` wires the full agent lifecycle to [OpenTelemetry](https://opentelemetry.io/docs/specs/semconv/gen-ai/) tracing. It instruments `on_reply`, `on_model_call`, and `on_acting`, producing hierarchical spans.
 
-The `input_kwargs` dictionary contains the following keys:
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `inputs` | See below | The unified input that triggers this reply |
-
-The `inputs` value can be one of:
-
-- **`Msg`** or **`list[Msg]`** — new input message(s) to feed into this reply
-- **`UserConfirmResultEvent`** — the user approved or rejected a pending tool call (Human-in-the-Loop)
-- **`ExternalExecutionResultEvent`** — results from tools executed outside the agent
-- **`None`** — resume without new input
-
-The generator yields `AgentEvent` instances (status updates, deltas, tool calls) and a final `Msg` containing the complete reply.
-
-Wrap `next_handler()` and yield each item to observe the reply process. Calling `next_handler()` without arguments forwards the original input unchanged:
-
-```python
-class ReplyMiddleware(MiddlewareBase):
-    async def on_reply(self, agent, input_kwargs, next_handler):
-        print("Reply started")
-        async for item in next_handler():
-            yield item
-        print("Reply finished")
-```
-
-You can modify input by passing keyword overrides to `next_handler(...)`:
-
-```python
-from agentscope.message import Msg, UserMsg
-
-class ModifyInputMiddleware(MiddlewareBase):
-    async def on_reply(self, agent, input_kwargs, next_handler):
-        original = input_kwargs["inputs"]
-        if isinstance(original, Msg):
-            modified = UserMsg(
-                name=original.name,
-                content="[Modified] Describe the weather.",
-            )
-            async for item in next_handler(inputs=modified):
-                yield item
-        else:
-            async for item in next_handler():
-                yield item
-```
-
-### on_reasoning
-
-Intercepts the **reasoning step** within a single ReAct round — including input preparation, the model call, and response chunk decoding.
-
-```python
-async def on_reasoning(
-    self,
-    agent: Agent,
-    input_kwargs: dict,
-    next_handler: Callable[..., AsyncGenerator],
-) -> AsyncGenerator:
-```
-
-The `input_kwargs` dictionary contains the following keys:
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `tool_choice` | `ToolChoice \| None` | The tool choice configuration for this reasoning step |
-
-<CodeGroup>
-```python Basic usage
-class ReasoningMiddleware(MiddlewareBase):
-    async def on_reasoning(self, agent, input_kwargs, next_handler):
-        print("Reasoning started")
-        async for event in next_handler():
-            yield event
-        print("Reasoning finished")
-```
-
-```python Modifying tool_choice
-from agentscope.tool import ToolChoice
-
-class ForceNoToolMiddleware(MiddlewareBase):
-    """Prevent the model from calling tools."""
-
-    async def on_reasoning(self, agent, input_kwargs, next_handler):
-        async for event in next_handler(
-            tool_choice=ToolChoice(mode="none"),
-        ):
-            yield event
-```
-</CodeGroup>
-
-### on_acting
-
-Intercepts **individual tool call execution**. Called once per tool call within a reasoning round.
-
-```python
-async def on_acting(
-    self,
-    agent: Agent,
-    input_kwargs: dict,
-    next_handler: Callable[..., AsyncGenerator],
-) -> AsyncGenerator:
-```
-
-The `input_kwargs` dictionary contains the following keys:
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `tool_call` | `ToolCallBlock` | The tool call to execute, containing `id`, `name`, `input` (raw JSON string), and `state` |
-
-<Note>
-This hook wraps **only** the raw `toolkit.call_tool()` I/O layer. Permission checking, input validation, and context writes are handled by the agent outside this hook. This makes it safe to offload `next_handler` to a background task. However, tools with `is_state_injected=True` receive the live `agent.state` object — offloading such tools may cause concurrent state mutations.
-</Note>
-
-<CodeGroup>
-```python Basic usage
-class ToolLoggingMiddleware(MiddlewareBase):
-    async def on_acting(self, agent, input_kwargs, next_handler):
-        tool = input_kwargs["tool_call"]
-        print(f"Executing tool: {tool.name}")
-        async for event in next_handler():
-            yield event
-        print(f"Tool {tool.name} completed")
-```
-
-```python Blocking dangerous tools
-class SanitizeToolInputMiddleware(MiddlewareBase):
-    """Validate tool input before execution."""
-
-    BLOCKED_TOOLS = {"delete_database", "rm_rf"}
-
-    async def on_acting(self, agent, input_kwargs, next_handler):
-        tool_call = input_kwargs["tool_call"]
-        if tool_call.name in self.BLOCKED_TOOLS:
-            raise PermissionError(f"Tool '{tool_call.name}' is blocked")
-        async for event in next_handler():
-            yield event
-```
-</CodeGroup>
-
-### on_model_call
-
-Intercepts the **raw model API call** — the lowest-level hook, sitting right above the actual `ChatModelBase.__call__()`.
-
-Unlike the other onion hooks which yield async generators, `on_model_call` **returns** a `ChatResponse` or `AsyncGenerator[ChatResponse, None]`.
-
-```python
-async def on_model_call(
-    self,
-    agent: Agent,
-    input_kwargs: dict,
-    next_handler: Callable[
-        ...,
-        Awaitable[ChatResponse | AsyncGenerator[ChatResponse, None]],
-    ],
-) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-```
-
-The `input_kwargs` dictionary contains the following keys:
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `messages` | `list[Msg]` | The formatted messages for the model |
-| `tools` | `list[dict]` | The tool schemas |
-| `tool_choice` | `ToolChoice \| None` | The tool choice configuration |
-| `current_model` | `ChatModelBase` | The model instance for this call |
-
-<CodeGroup>
-```python Non-streaming usage
-class TimingMiddleware(MiddlewareBase):
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        import time
-        start = time.time()
-        result = await next_handler()
-        elapsed = time.time() - start
-        print(f"Model call took {elapsed:.2f}s")
-        return result
-```
-
-```python Streaming usage
-from agentscope.model import ChatResponse
-
-class StreamLoggingMiddleware(MiddlewareBase):
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        result = await next_handler()
-
-        if isinstance(result, ChatResponse):
-            return result
-
-        async def wrapped():
-            async for chunk in result:
-                print(f"Chunk: {chunk.is_last}")
-                yield chunk
-
-        return wrapped()
-```
-
-```python Modifying model input
-from agentscope.message import Msg
-
-class InjectSystemMessageMiddleware(MiddlewareBase):
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        from agentscope.message import TextBlock
-        messages = [
-            Msg(name="system", content=[TextBlock(text="Extra instruction")], role="system"),
-        ] + input_kwargs["messages"]
-
-        # Only pass the fields you want to override.
-        # Unspecified fields use their original values.
-        return await next_handler(messages=messages)
-```
-</CodeGroup>
-
-### on_system_prompt
-
-Transforms the **system prompt string**. Unlike other hooks, this uses a **transformer/pipeline pattern** — middlewares are applied sequentially, each receiving the output of the previous one.
-
-```python
-async def on_system_prompt(
-    self,
-    agent: Agent,
-    current_prompt: str,
-) -> str:
-```
-
-```python
-class AppendContextMiddleware(MiddlewareBase):
-    async def on_system_prompt(self, agent, current_prompt):
-        return current_prompt + "\n\nCurrent time: 2025-01-01T00:00:00"
-```
-
-Multiple `on_system_prompt` middlewares are applied left to right:
-
-```python
-agent = Agent(
-    ...
-    middlewares=[mw1, mw2],  # prompt → mw1 → mw2 → final
-)
-```
-
-<Note>
-`on_system_prompt` is called **twice per reasoning round**: once from `compress_context()` during token counting, and again from `_reasoning_impl()` when building the actual model input. In a multi-step ReAct loop, this pattern repeats for each round.
-</Note>
-
-## Execution Order
-
-### Onion Pattern
-
-For onion hooks (`on_reply`, `on_reasoning`, `on_acting`, `on_model_call`), the **first middleware in the list is the outermost layer**:
-
-```python
-middlewares = [mw1, mw2]
-
-# Execution order:
-# mw1 before → mw2 before → [inner logic] → mw2 after → mw1 after
-```
-
-For streaming/yielding hooks, the inner middleware sees each yielded item first:
-
-```
-mw1_pre → mw2_pre → mw2_event → mw1_event → ... → mw2_post → mw1_post
-```
-
-### Transformer Pattern
-
-For `on_system_prompt`, middlewares run **sequentially left to right**:
-
-```python
-middlewares = [mw1, mw2]
-
-# Execution:
-# original_prompt → mw1.on_system_prompt() → mw2.on_system_prompt() → final
-```
-
-## Combining Multiple Hooks
-
-A single middleware can implement multiple hooks. The system automatically detects which hooks are overridden and routes them appropriately.
-
-```python
-class FullObservabilityMiddleware(MiddlewareBase):
-    """Observe all lifecycle phases."""
-
-    async def on_reply(self, agent, input_kwargs, next_handler):
-        print(f"[reply] start for {agent.name}")
-        async for item in next_handler():
-            yield item
-        print(f"[reply] end for {agent.name}")
-
-    async def on_reasoning(self, agent, input_kwargs, next_handler):
-        print(f"[reasoning] start")
-        async for event in next_handler():
-            yield event
-        print(f"[reasoning] end")
-
-    async def on_model_call(self, agent, input_kwargs, next_handler):
-        print(f"[model_call] calling {input_kwargs['current_model'].model}")
-        result = await next_handler()
-        print(f"[model_call] done")
-        return result
-
-    async def on_system_prompt(self, agent, current_prompt):
-        print(f"[system_prompt] length={len(current_prompt)}")
-        return current_prompt
-
-agent = Agent(
-    ...
-    middlewares=[FullObservabilityMiddleware()],
-)
-```
-
-The same middleware instance appears in multiple internal hook lists. Execution order of hooks within a single reply follows the agent's lifecycle:
-
-```
-on_reply
-  └── for each ReAct round:
-        ├── compress_context() → on_system_prompt (token counting)
-        ├── on_reasoning
-        │     ├── _prepare_model_input() → on_system_prompt
-        │     └── on_model_call
-        └── on_acting  (once per tool call in this round)
-```
-
-## Built-in: TracingMiddleware
-
-AgentScope provides a built-in `TracingMiddleware` that adds **OpenTelemetry tracing** to the full agent lifecycle — reply, model calls, and tool executions. It implements three hooks (`on_reply`, `on_model_call`, `on_acting`) and produces hierarchical spans following the [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
-
-### Setup
-
-Before using `TracingMiddleware`, configure an OpenTelemetry `TracerProvider` with an OTLP exporter:
+Before using it, register a `TracerProvider` and an OTLP exporter in the process:
 
 ```python
 from opentelemetry import trace
@@ -431,10 +80,10 @@ provider.add_span_processor(
 trace.set_tracer_provider(provider)
 ```
 
-Then attach `TracingMiddleware` to your agent:
+Then attach `TracingMiddleware` to the agent:
 
 ```python
-from agentscope.agent import Agent
+from agentscope import Agent
 from agentscope.middleware import TracingMiddleware
 
 agent = Agent(
@@ -446,54 +95,141 @@ agent = Agent(
 )
 ```
 
-### Span Hierarchy
-
-When tracing is enabled, each agent reply produces a nested span tree:
-
-```
-agent reply (on_reply)
-  ├── llm call (on_model_call)
-  ├── tool execution (on_acting)   ← one per tool call
-  ├── llm call (on_model_call)     ← follow-up reasoning
-  └── ...
-```
-
-### Captured Attributes
+Each reply produces a nested span tree. The key attributes captured at each level are:
 
 <Tabs>
   <Tab title="Agent Reply Span">
-  Captured via `on_reply`:
+  From `on_reply`:
   - Agent name, session ID, reply ID
-  - Input messages and final output message
-  - Human-in-the-Loop (HITL) pending tools
-  - External execution pending tools
+  - Input messages and the final output message
+  - HITL pending tool calls
+  - External execution pending tool calls
   </Tab>
   <Tab title="Model Call Span">
-  Captured via `on_model_call`:
-  - Model name, provider, input/output tokens
-  - Request/response message content
-  - Streaming-aware: wraps async generators to capture the final chunk
+  From `on_model_call`:
+  - Model name, provider, input/output token counts
+  - Request and response message content
+  - Wraps streaming responses, writing attributes onto the final chunk
   </Tab>
   <Tab title="Tool Execution Span">
-  Captured via `on_acting`:
+  From `on_acting`:
   - Tool name, call ID, input arguments
   - Tool execution result
   </Tab>
 </Tabs>
 
-### Zero-Overhead When Disabled
-
-If no `TracerProvider` has been configured, every hook short-circuits directly to `next_handler()` with minimal overhead — no spans are created, no attributes are computed. Additionally, the agent's `is_implemented()` check ensures that only hooks actually overridden by `TracingMiddleware` are included in the execution chain, so unimplemented hooks incur zero cost.
+When no `TracerProvider` is configured, every hook short-circuits directly to `next_handler()` — no spans are created, no attributes are computed — making the overhead negligible.
 
 <Info>
-When the agent receives an `ExternalExecutionResultEvent` (tools executed outside the agent), `TracingMiddleware` creates synthetic spans for each externally-executed tool result, preserving full observability even for tools that run in external systems.
+When the agent receives an `ExternalExecutionResultEvent` (a tool executed outside the agent), `TracingMiddleware` synthesizes a compensating span for each external execution result, preserving full observability for tools run by external systems.
 </Info>
+
+## Custom Middleware
+
+Subclass `MiddlewareBase` and implement only the hooks you need — leave the rest alone.
+
+The example below covers 4 positions in a single middleware. Each onion hook receives an `input_kwargs` dict carrying the fields that flow into the wrapped layer; forward it with `next_handler(**input_kwargs)`, or pass keyword arguments to override specific fields:
+
+```python
+from typing import AsyncGenerator, Awaitable, Callable
+
+from agentscope import Agent
+from agentscope.event import AgentEvent
+from agentscope.message import Msg
+from agentscope.middleware import MiddlewareBase
+from agentscope.model import ChatResponse
+
+
+class FullObservabilityMiddleware(MiddlewareBase):
+    """Observe reply, reasoning, model_call, and system_prompt at once."""
+
+    async def on_reply(
+        self,
+        agent: Agent,
+        # {"inputs": Msg | list[Msg] | UserConfirmResultEvent | ExternalExecutionResultEvent | None}
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator[AgentEvent | Msg, None]],
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+        print(f"[reply] start for {agent.name}")
+        async for item in next_handler(**input_kwargs):
+            yield item
+        print(f"[reply] end for {agent.name}")
+
+    async def on_reasoning(
+        self,
+        agent: Agent,
+        # {"tool_choice": ToolChoice | None}
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator[AgentEvent, None]],
+    ) -> AsyncGenerator[AgentEvent, None]:
+        print("[reasoning] start")
+        async for event in next_handler(**input_kwargs):
+            yield event
+        print("[reasoning] end")
+
+    async def on_model_call(
+        self,
+        agent: Agent,
+        # {"messages": list[Msg], "tools": list[dict], "tool_choice": ToolChoice | None, "current_model": ChatModelBase}
+        input_kwargs: dict,
+        next_handler: Callable[
+            ..., Awaitable[ChatResponse | AsyncGenerator[ChatResponse, None]]
+        ],
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        print(f"[model_call] {input_kwargs['current_model'].model}")
+        result = await next_handler(**input_kwargs)
+        print("[model_call] done")
+        return result
+
+    async def on_system_prompt(
+        self,
+        agent: Agent,
+        current_prompt: str,
+    ) -> str:
+        print(f"[system_prompt] length={len(current_prompt)}")
+        return current_prompt
+```
+
+### Execution Order
+
+Onion hooks (`on_reply`, `on_reasoning`, `on_acting`, `on_model_call`) — **the first middleware in the list is the outermost layer**:
+
+```python
+middlewares = [mw1, mw2]
+# Call order:
+# mw1 pre → mw2 pre → inner logic → mw2 post → mw1 post
+```
+
+For streaming / event-yielding hooks, the inner middleware sees each yielded event first:
+
+```
+mw1_pre → mw2_pre → mw2_event → mw1_event → ... → mw2_post → mw1_post
+```
+
+Transformer hooks (`on_system_prompt`) — middlewares **chain left to right**:
+
+```python
+middlewares = [mw1, mw2]
+# original_prompt → mw1.on_system_prompt() → mw2.on_system_prompt() → final
+```
+
+The overall execution order of all hooks within a single reply follows the agent lifecycle:
+
+```
+on_reply
+  └── per ReAct round:
+        ├── compress_context() → on_system_prompt (token counting)
+        ├── on_reasoning
+        │     ├── _prepare_model_input() → on_system_prompt
+        │     └── on_model_call
+        └── on_acting (once per tool call in this round)
+```
 
 ## Practical Examples
 
-### Simple Timing Middleware
+### Timing middleware
 
-The following middleware logs all model interactions with timing:
+The middleware below records the elapsed time of every model call:
 
 ```python
 import time
@@ -511,12 +247,13 @@ class TimingMiddleware(MiddlewareBase):
         return result
 ```
 
-### Rate Limiting Middleware
+### Rate-limiting middleware
 
-The following middleware enforces a delay between model calls:
+The middleware below enforces a minimum interval between two model calls:
 
 ```python
 import asyncio
+import time
 from agentscope.middleware import MiddlewareBase
 
 class RateLimitMiddleware(MiddlewareBase):
@@ -525,7 +262,6 @@ class RateLimitMiddleware(MiddlewareBase):
         self._min_interval = min_interval
 
     async def on_model_call(self, agent, input_kwargs, next_handler):
-        import time
         now = time.time()
         wait = self._min_interval - (now - self._last_call)
         if wait > 0:
@@ -534,9 +270,9 @@ class RateLimitMiddleware(MiddlewareBase):
         return await next_handler()
 ```
 
-### Dynamic System Prompt Middleware
+### Dynamic system prompt middleware
 
-The following middleware injects real-time context into the system prompt:
+The middleware below injects real-time context into the system prompt:
 
 ```python
 from datetime import datetime
@@ -560,9 +296,9 @@ agent = Agent(
 )
 ```
 
-### Model Fallback Middleware
+### Model fallback middleware
 
-The following middleware switches to a fallback model when the primary fails:
+The middleware below switches to a fallback model when the primary one fails:
 
 ```python
 from agentscope.middleware import MiddlewareBase
@@ -580,47 +316,3 @@ class ModelFallbackMiddleware(MiddlewareBase):
                 current_model=self._fallback,
             )
 ```
-
-## API Reference
-
-### MiddlewareBase
-
-```python
-class MiddlewareBase:
-    def is_implemented(self, hook_name: str) -> bool
-    async def on_reply(self, agent, input_kwargs, next_handler) -> AsyncGenerator
-    async def on_reasoning(self, agent, input_kwargs, next_handler) -> AsyncGenerator
-    async def on_acting(self, agent, input_kwargs, next_handler) -> AsyncGenerator
-    async def on_model_call(self, agent, input_kwargs, next_handler) -> ChatResponse | AsyncGenerator
-    async def on_system_prompt(self, agent, current_prompt) -> str
-```
-
-All hooks raise `RuntimeError` by default. The `is_implemented()` method checks whether a subclass has overridden a hook by comparing the method reference against `MiddlewareBase`'s definition. The agent uses this at construction time to build separate hook lists, avoiding unnecessary calls for unimplemented hooks.
-
-### Agent Integration
-
-Middleware is configured via the `middlewares` parameter on `Agent.__init__`:
-
-```python
-Agent(
-    name="assistant",
-    system_prompt="...",
-    model=model,
-    toolkit=toolkit,
-    middlewares=[mw1, mw2, mw3],  # Applied in order
-)
-```
-
-The agent internally partitions the middleware list by implemented hooks:
-
-| Internal List | Hooks |
-|---------------|-------|
-| `_reply_middlewares` | Middlewares implementing `on_reply` |
-| `_reasoning_middlewares` | Middlewares implementing `on_reasoning` |
-| `_acting_middlewares` | Middlewares implementing `on_acting` |
-| `_model_call_middlewares` | Middlewares implementing `on_model_call` |
-| `_system_prompt_middlewares` | Middlewares implementing `on_system_prompt` |
-
-<Info>
-This partitioning is done **once** at construction time for efficiency.
-</Info>
