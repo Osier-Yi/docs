@@ -9,88 +9,140 @@
   },
   "favicon": "logo/agentscope.svg",
   "navigation": {
-    "versions": [
+    "languages": [
       {
-        "version": "2.0",
-        "tabs": [
+        "language": "en",
+        "default": true,
+        "versions": [
           {
-            "tab": "Guides",
-            "locale": "en",
-            "groups": [
+            "version": "2.0",
+            "tabs": [
               {
-                "group": "Get Started",
-                "pages": [
-                  "v2/index",
-                  "v2/quickstart"
-                ]
-              },
-              {
-                "group": "Building Blocks",
-                "pages": [
-                  "v2/building-blocks/message-and-event",
-                  "v2/building-blocks/agent",
-                  "v2/building-blocks/model",
-                  "v2/building-blocks/context",
-                  "v2/building-blocks/tool",
-                  "v2/building-blocks/permission-system",
-                  "v2/building-blocks/middleware",
-                  "v2/building-blocks/workspace"
-                ]
-              },
-              {
-                "group": "Deploy",
-                "pages": [
-                  "v2/deploy/agent-service",
-                  "v2/deploy/sandbox"
-                ]
-              },
-              {
-                "group": "API",
-                "openapi": "v2/deploy/openapi.json"
-              },
-              {
-                "group": "Others",
-                "pages": [
-                  "v2/others/faq"
+                "tab": "Guides",
+                "groups": [
+                  {
+                    "group": "Get Started",
+                    "pages": [
+                      "v2/index",
+                      "v2/quickstart"
+                    ]
+                  },
+                  {
+                    "group": "Building Blocks",
+                    "pages": [
+                      "v2/building-blocks/message-and-event",
+                      "v2/building-blocks/agent",
+                      "v2/building-blocks/model",
+                      "v2/building-blocks/context",
+                      "v2/building-blocks/tool",
+                      "v2/building-blocks/permission-system",
+                      "v2/building-blocks/middleware",
+                      "v2/building-blocks/workspace"
+                    ]
+                  },
+                  {
+                    "group": "Deploy",
+                    "pages": [
+                      "v2/deploy/agent-service"
+                    ]
+                  },
+                  {
+                    "group": "API",
+                    "openapi": "v2/deploy/openapi.json"
+                  },
+                  {
+                    "group": "Others",
+                    "pages": [
+                      "v2/others/faq"
+                    ]
+                  }
                 ]
               }
             ]
           },
           {
-            "tab": "指南",
-            "locale": "zh",
-            "groups": [
+            "version": "1.0",
+            "tabs": [
               {
-                "group": "快速开始",
-                "pages": [
-                  "zh/v2/index",
-                  "zh/v2/quickstart"
-                ]
-              },
-              {
-                "group": "核心模块",
-                "pages": [
-                  "zh/v2/building-blocks/message-and-event",
-                  "zh/v2/building-blocks/agent",
-                  "zh/v2/building-blocks/model",
-                  "zh/v2/building-blocks/context",
-                  "zh/v2/building-blocks/tool",
-                  "zh/v2/building-blocks/permission-system",
-                  "zh/v2/building-blocks/middleware",
-                  "zh/v2/building-blocks/workspace"
-                ]
-              },
-              {
-                "group": "部署",
-                "pages": [
-                  "zh/v2/deploy/agent-service",
-                  "zh/v2/deploy/sandbox"
-                ]
-              },
-              {
-                "group": "其他",
-                "pages": [
-                  "zh/v2/others/faq"
+                "tab": "Guides",
+                "groups": [
+                  {
+                    "group": "Get Started",
+                    "pages": [
+                      "v1/index",
+                      "v1/quickstart"
+                    ]
+                  },
+                  {
+                    "group": "Tutorial",
+                    "pages": [
+                      "v1/tutorial/tutorial_research_agent",
+                      "v1/tutorial/tutorial_sales_agent"
+                    ]
+                  },
+                  {
+                    "group": "Out-of-box Agents",
+                    "pages": [
+                      "v1/out-of-box-agents/alias",
+                      "v1/out-of-box-agents/browser-use",
+                      "v1/out-of-box-agents/deep-research",
+                      "v1/out-of-box-agents/alias-finance",
+                      "v1/out-of-box-agents/data-science",
+                      "v1/out-of-box-agents/datajuicer-agent",
+                      "v1/out-of-box-agents/evo-trader"
+                    ]
+                  },
+                  {
+                    "group": "Basic Concepts",
+                    "pages": [
+                      "v1/basic-concepts/msg",
+                      "v1/basic-concepts/agent",
+                      "v1/basic-concepts/model",
+                      "v1/basic-concepts/context-and-memory",
+                      "v1/basic-concepts/tool"
+                    ]
+                  },
+                  {
+                    "group": "Building Blocks",
+                    "pages": [
+                      "v1/building-blocks/agent",
+                      "v1/building-blocks/models",
+                      "v1/building-blocks/context-and-memory",
+                      "v1/building-blocks/rag",
+                      "v1/building-blocks/tool-capabilities",
+                      "v1/building-blocks/hooking-functions",
+                      "v1/building-blocks/orchestration"
+                    ]
+                  },
+                  {
+                    "group": "Observe & Evaluate",
+                    "pages": [
+                      "v1/observe-and-evaluate/observability",
+                      "v1/observe-and-evaluate/evaluation"
+                    ]
+                  },
+                  {
+                    "group": "Tune Agent",
+                    "pages": [
+                      "v1/tune-agent/tune-your-first-agent",
+                      "v1/tune-agent/model-selection-tuning",
+                      "v1/tune-agent/prompt-tuning",
+                      "v1/tune-agent/model-weights-tuning",
+                      "v1/tune-agent/tune-multi-agents"
+                    ]
+                  },
+                  {
+                    "group": "Deploy & Serve",
+                    "pages": [
+                      "v1/deploy-and-serve/agent-as-service"
+                    ]
+                  },
+                  {
+                    "group": "Others",
+                    "pages": [
+                      "v1/others/faq"
+                    ]
+                  }
                 ]
               }
             ]
@@ -98,87 +150,46 @@
         ]
       },
       {
-        "version": "1.0",
-        "tabs": [
+        "language": "zh",
+        "versions": [
           {
-            "tab": "Guides",
-            "groups": [
+            "version": "2.0",
+            "tabs": [
               {
-                "group": "Get Started",
-                "pages": [
-                  "v1/index",
-                  "v1/quickstart"
-                ]
-              },
-              {
-                "group": "Tutorial",
-                "pages": [
-                  "v1/tutorial/tutorial_research_agent",
-                  "v1/tutorial/tutorial_sales_agent"
-                ]
-              },
-              {
-                "group": "Out-of-box Agents",
-                "pages": [
-                  "v1/out-of-box-agents/alias",
-                  "v1/out-of-box-agents/browser-use",
-                  "v1/out-of-box-agents/deep-research",
-                  "v1/out-of-box-agents/alias-finance",
-                  "v1/out-of-box-agents/data-science",
-                  "v1/out-of-box-agents/datajuicer-agent",
-                  "v1/out-of-box-agents/evo-trader"
-                ]
-              },
-              {
-                "group": "Basic Concepts",
-                "pages": [
-                  "v1/basic-concepts/msg",
-                  "v1/basic-concepts/agent",
-                  "v1/basic-concepts/model",
-                  "v1/basic-concepts/context-and-memory",
-                  "v1/basic-concepts/tool"
-                ]
-              },
-              {
-                "group": "Building Blocks",
-                "pages": [
-                  "v1/building-blocks/agent",
-                  "v1/building-blocks/models",
-                  "v1/building-blocks/context-and-memory",
-                  "v1/building-blocks/rag",
-                  "v1/building-blocks/tool-capabilities",
-                  "v1/building-blocks/hooking-functions",
-                  "v1/building-blocks/orchestration"
-                ]
-              },
-              {
-                "group": "Observe & Evaluate",
-                "pages": [
-                  "v1/observe-and-evaluate/observability",
-                  "v1/observe-and-evaluate/evaluation"
-                ]
-              },
-              {
-                "group": "Tune Agent",
-                "pages": [
-                  "v1/tune-agent/tune-your-first-agent",
-                  "v1/tune-agent/model-selection-tuning",
-                  "v1/tune-agent/prompt-tuning",
-                  "v1/tune-agent/model-weights-tuning",
-                  "v1/tune-agent/tune-multi-agents"
-                ]
-              },
-              {
-                "group": "Deploy & Serve",
-                "pages": [
-                  "v1/deploy-and-serve/agent-as-service",
-                  "v1/deploy-and-serve/sandbox-and-tool"
-                ]
-              },
-              {
-                "group": "Others",
-                "pages": [
-                  "v1/others/faq"
+                "tab": "指南",
+                "groups": [
+                  {
+                    "group": "快速开始",
+                    "pages": [
+                      "zh/v2/index",
+                      "zh/v2/quickstart"
+                    ]
+                  },
+                  {
+                    "group": "核心模块",
+                    "pages": [
+                      "zh/v2/building-blocks/message-and-event",
+                      "zh/v2/building-blocks/agent",
+                      "zh/v2/building-blocks/model",
+                      "zh/v2/building-blocks/context",
+                      "zh/v2/building-blocks/tool",
+                      "zh/v2/building-blocks/permission-system",
+                      "zh/v2/building-blocks/middleware",
+                      "zh/v2/building-blocks/workspace"
+                    ]
+                  },
+                  {
+                    "group": "部署",
+                    "pages": [
+                      "zh/v2/deploy/agent-service"
+                    ]
+                  },
+                  {
+                    "group": "其他",
+                    "pages": [
+                      "zh/v2/others/faq"
+                    ]
+                  }
                 ]
               }
             ]
@@ -197,17 +208,6 @@
           "anchor": "Blog",
           "href": "https://agentscope.io/blogs/",
           "icon": "newspaper"
-        }
-      ],
-      "languages": [
-        {
-          "language": "en",
-          "default": true,
-          "href": "/"
-        },
-        {
-          "language": "zh",
-          "href": "/zh"
         }
       ]
     }

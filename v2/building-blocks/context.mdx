@@ -3,48 +3,45 @@ title: "Context"
 description: "Manage agent context window for stable, long-running execution"
 ---
 
-The context is the working memory of an agent — the sequence of messages (user inputs, assistant responses, tool calls and results) that the LLM sees on each reasoning step. As conversations grow, this context eventually exceeds the model's capacity.
+## Overview
 
-AgentScope provides three mechanisms to keep agents running indefinitely without losing critical information:
+The context is an agent's working memory — the messages (user inputs, assistant responses, tool calls, tool results) that the LLM sees on every reasoning step. As conversations grow, raw context eventually exceeds the model's window. AgentScope keeps an agent runnable indefinitely through three mechanisms:
 
-- **Context compression** — summarizes older messages into a structured summary when the token count approaches the model's limit
-- **Tool result compression** — truncates oversized tool outputs before they enter the context
-- **Context offloading** — persists compressed content to external storage for later retrieval
+- **Context compression** — summarizes older messages once token usage approaches the model's limit.
+- **Tool result truncation** — caps oversized tool outputs before they enter the context.
+- **Context offloading** — persists removed content to external storage so the agent can retrieve it later.
 
-## Assemble the System Prompt
+Before each model call, the agent assembles a single API input from three layers — the structure below shows what flows into that call:
 
-Before each model call, the agent assembles the full input from several sources:
+<Tree>
+  <Tree.Folder name="Model API Input" defaultOpen>
+    <Tree.Folder name="System Prompt" defaultOpen>
+      <Tree.File name="Base system prompt" />
+      <Tree.File name="Skill instructions (from Toolkit)" />
+      <Tree.File name="on_system_prompt middleware transforms" />
+    </Tree.Folder>
+    <Tree.File name="Summary (compressed history, if any)" />
+    <Tree.File name="Context (recent uncompressed messages)" />
+  </Tree.Folder>
+</Tree>
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Model Input                         │
-├─────────────────────────────────────────────────────┤
-│  1. System Prompt                                    │
-│     ├── Base system prompt                           │
-│     ├── Skill instructions (from Toolkit)            │
-│     └── Middleware transforms (on_system_prompt)     │
-├─────────────────────────────────────────────────────┤
-│  2. Summary (compressed history, if any)             │
-├─────────────────────────────────────────────────────┤
-│  3. Context (recent uncompressed messages)           │
-└─────────────────────────────────────────────────────┘
-```
+How each layer is built:
 
-The agent builds this input via `_prepare_model_input()` before every model call. The system prompt is assembled in `_get_system_prompt()`:
-
-1. Start with the base `system_prompt` passed at agent creation
-2. Append skill instructions — a list of available skills (name + description) so the agent knows what skills it can invoke
-3. Apply `on_system_prompt` middlewares sequentially — each middleware receives the current prompt string and returns a transformed version
+1. **System prompt** — starts from the `system_prompt` passed at agent creation, then appends skill instructions (each skill's name and description, sourced from the toolkit), then runs every `on_system_prompt` [middleware](/v2/building-blocks/middleware) hook in order.
+2. **Summary** — the compressed digest of older messages, present only after a compression has occurred.
+3. **Context** — the recent uncompressed messages (user inputs, assistant responses, tool calls, tool results).
 
 <Tip>
-Use the `on_system_prompt` middleware hook to inject dynamic context like workspace instructions, time-sensitive information, or environment details without modifying the base prompt.
+Use the `on_system_prompt` middleware hook to inject dynamic context — workspace instructions, time-sensitive facts, environment details — without rewriting the base prompt.
 </Tip>
 
 ## Compact Context
 
-AgentScope automatically manages context size through `ContextConfig`, which controls two mechanisms: **context compression** (summarizing older messages) and **tool result truncation** (capping oversized tool outputs). Both activate transparently — the agent continues working without interruption.
+When the context window fills up, AgentScope keeps it in shape with two automatic mechanisms governed by `ContextConfig`: **context compression** (summarize older messages) and **tool result truncation** (cap oversized tool outputs). Both run transparently — the agent continues working without interruption.
 
 ### Configure ContextConfig
+
+`ContextConfig` is passed to the agent at construction time:
 
 ```python
 from agentscope import Agent
@@ -63,92 +60,117 @@ agent = Agent(
 )
 ```
 
-| Parameter            | Default         | Description                                                                                                       |
+Available fields:
+
+| Parameter            | Type            | Description                                                                                                       |
 |----------------------|-----------------|-------------------------------------------------------------------------------------------------------------------|
-| `trigger_ratio`      | `0.8`           | Context compression activates when token usage exceeds this ratio of the model's context size (maximum value 0.9) |
-| `reserve_ratio`      | `0.1`           | Proportion of context tokens to keep as recent messages after compression                                         |
-| `tool_result_limit`  | `3000`          | Maximum tokens per tool result; outputs exceeding this are truncated                                              |
-| `compression_prompt` | *(built-in)*    | The prompt that guides the model to generate the summary                                                          |
-| `summary_template`   | *(built-in)*    | String template for formatting the summary into the context                                                       |
-| `summary_schema`     | `SummarySchema` | JSON Schema that constrains the model's structured summary output                                                 |
+| `trigger_ratio`      | `float`         | Compression activates when token usage exceeds this ratio of the model's context size (capped at `0.9`)            |
+| `reserve_ratio`      | `float`         | Proportion of context tokens kept as recent messages after compression                                            |
+| `tool_result_limit`  | `int`           | Maximum tokens per tool result; outputs exceeding this are truncated                                              |
+| `compression_prompt` | `str`           | The prompt that guides the model to generate the summary                                                          |
+| `summary_template`   | `str`           | String template for formatting the summary into the context                                                       |
+| `summary_schema`     | `dict`          | JSON Schema constraining the model's structured summary output                                                    |
 
-### Context Compression
+### Compress Context
 
-Before each reasoning step, the agent counts the total tokens (system prompt + summary + context + tool schemas). When the count exceeds `trigger_ratio × context_size`, the compression process activates:
+Compression runs automatically before each reasoning step. The flow:
 
-```mermaid
-sequenceDiagram
-    participant Agent
-    participant Model
-    participant State as AgentState
-
-    Note over Agent: Before each reasoning step
-    Agent->>Model: Count tokens (system + summary + context + tools)
-    alt tokens > trigger_ratio × context_size
-        Agent->>Agent: Split context into compress / reserve
-        Agent->>Model: Generate structured summary from older messages
-        Model-->>Agent: SummarySchema (structured output)
-        Agent->>State: Update summary, replace context with reserved messages
-    end
-    Agent->>Model: Proceed with reasoning
-```
-
-The compression process:
-
-1. **Context splitting** — messages are split into older messages (to compress) and recent messages (to reserve), preserving tool call/result pairs intact
-2. **Summary generation** — the model generates a structured summary from the older messages
-3. **State update** — the summary replaces the compressed messages; reserved messages become the new context
-
-The structured summary contains five fields designed to preserve critical information for task continuation:
-
-| Field | Purpose |
-|-------|---------|
-| `task_overview` | The user's core request and success criteria |
-| `current_state` | What has been completed, files modified, artifacts produced |
-| `important_discoveries` | Technical constraints, decisions, errors encountered |
-| `next_steps` | Specific actions needed to complete the task |
-| `context_to_preserve` | User preferences, domain-specific details, promises made |
+<Steps>
+  <Step title="Count tokens">
+    The agent totals the tokens of the system prompt, summary, context, and tool schemas.
+  </Step>
+  <Step title="Check threshold">
+    If total tokens exceed `trigger_ratio × context_size`, compression activates. Otherwise the agent proceeds with the model call as usual.
+  </Step>
+  <Step title="Split messages">
+    Older messages are marked for compression; recent messages within `reserve_ratio × context_size` are kept. Tool call / result pairs are kept intact across the split.
+  </Step>
+  <Step title="Generate summary">
+    The model produces a structured summary from the older messages, with five fields: `task_overview`, `current_state`, `important_discoveries`, `next_steps`, `context_to_preserve`.
+  </Step>
+  <Step title="Update state">
+    The summary replaces the compressed messages; the reserved messages become the new context. The agent then continues its reasoning step.
+  </Step>
+</Steps>
 
 <Note>
-The remaining 10% between `trigger_ratio` (max 0.9) and the full context size is reserved for the compression model call itself — the model needs room to generate the summary.
+The remaining 10% between `trigger_ratio` (max `0.9`) and the full context size is reserved for the compression model call itself — the model needs room to generate the summary.
 </Note>
 
-### Tool Result Truncation
+Compression can also be triggered manually by calling the agent's `compress_context()` method. Without arguments, it uses the agent's stored `context_config`; pass a one-off `ContextConfig` to override:
 
-After each tool execution, the agent checks whether the result exceeds `tool_result_limit` tokens. If it does, the result is split into a reserved portion (kept in context) and an offloaded portion (persisted to workspace storage if available).
+```python
+# Force-check using the agent's default config
+await agent.compress_context()
 
-A truncation marker is appended so the agent knows the output was incomplete:
+# Or override the config for this single call (e.g. compress more aggressively)
+from agentscope.agent import ContextConfig
+
+await agent.compress_context(
+    context_config=ContextConfig(trigger_ratio=0.5, reserve_ratio=0.1),
+)
+```
+
+The method is a no-op when token usage is below `trigger_ratio × context_size`, so it is safe to call between turns or at any custom checkpoint.
+
+### Truncate Tool Results
+
+After each tool call, the agent compares the result's token count against `tool_result_limit`. If the limit is exceeded, the result is split into a reserved portion (kept in context) and an offloaded portion (handed to the offloader if one is attached — see [Offload Context](#offload-context)).
+
+A truncation marker is appended to the reserved portion so the agent knows the output was clipped:
 
 ```
 <<<TRUNCATED>>>
 <system-reminder>The remaining content has been omitted for limited context.</system-reminder>
 ```
 
+When an offloader is attached, the marker also points the agent to the persisted full output:
+
+```
+<<<TRUNCATED>>>
+<system-reminder>The remaining content has been omitted for limited context. You can refer to the file in '/path/to/tool_result-<id>.txt' for the truncated content if needed.</system-reminder>
+```
+
 <Warning>
-Setting `tool_result_limit` too low may cause the agent to miss critical information in tool outputs. Setting it too high risks filling the context with a single result, leaving insufficient room for reasoning.
+Setting `tool_result_limit` too low may starve the agent of critical tool output. Setting it too high risks one result filling the entire context.
 </Warning>
 
-## Offload Context to Storage
+## Offload Context
 
-When context is compressed or tool results are truncated, the removed content is not lost — it can be offloaded to external storage via the workspace. This enables the agent to retrieve historical context when needed, supporting long-running tasks that span many interactions.
+Context offloading writes content the agent has dropped — compressed messages, truncated tool outputs — to external storage, so the agent can read it back later via its file tools (Read, Grep, Glob) when it needs a detail that was compressed away.
 
-Context offloading serves two purposes:
+### Use the Offloader Protocol
 
-1. **Auditability** — the full history of compressed context is preserved for debugging or review
-2. **Agentic retrieval** — the agent can use its file tools (Read, Grep, Glob) to search through offloaded content when it needs to recall details that were compressed away
-
-### WorkspaceBase Interface
-
-The `WorkspaceBase` abstract class defines the offloading contract. Any workspace implementation must provide these two methods:
+Offloading is wired through the `Offloader` protocol — a structural contract with two methods:
 
 | Method | Description |
 |--------|-------------|
-| `offload_context(session_id, msgs)` | Persist compressed messages to storage; returns the storage path |
-| `offload_tool_result(session_id, tool_result)` | Persist a truncated tool result to storage; returns the storage path |
+| `offload_context(session_id, msgs)` | Persist compressed messages; returns a reference (e.g. a file path) to the persisted content |
+| `offload_tool_result(session_id, tool_result)` | Persist a truncated tool result; returns a reference to the persisted content |
 
-### Built-in: LocalWorkspace
+Pass any object satisfying this protocol to the agent's `offloader` argument. AgentScope's [`workspace`](/v2/building-blocks/workspace) module ships ready-made implementations:
 
-The `LocalWorkspace` implementation stores offloaded content as local files:
+```python
+from agentscope import Agent
+from agentscope.workspace import LocalWorkspace
+
+workspace = LocalWorkspace(workdir="/tmp/agent_workspace")
+await workspace.initialize()
+
+agent = Agent(
+    name="my_agent",
+    system_prompt="...",
+    model=model,
+    toolkit=toolkit,
+    offloader=workspace,
+)
+```
+
+Without an `offloader`, compressed messages and truncated tool results are simply dropped after they leave the context window.
+
+### Use LocalWorkspace
+
+`LocalWorkspace` writes offloaded content under `workdir`, isolating each agent run by `session_id`:
 
 <Tree>
   <Tree.Folder name="{workdir}" defaultOpen>
@@ -167,31 +189,24 @@ The `LocalWorkspace` implementation stores offloaded content as local files:
   </Tree.Folder>
 </Tree>
 
-- `context.jsonl` — compressed messages appended as JSON Lines on each compression cycle
-- `tool_result-{id}.txt` — plain text extraction of truncated tool outputs
-- `data/` — multimodal files (images, etc.) deduplicated by SHA-256 content hash
+How content is laid out:
 
-### Create a Custom Workspace
+- **`sessions/{session_id}/`** — one directory per agent session, so concurrent agents don't collide. Compressed messages append to `context.jsonl`; each truncated tool result becomes its own `tool_result-{tool_id}.txt`.
+- **`data/`** — multimodal files (images, audio) referenced by offloaded messages, deduplicated by SHA-256 content hash.
+- **`skills/`** — unrelated to offloading; the workspace also serves as the agent's skill directory.
 
-To offload context to a different backend (e.g., a database, cloud storage, or vector store), subclass `WorkspaceBase` and implement the offloading methods:
+### Create Custom Offloader
+
+For backends other than the local filesystem (databases, cloud blobs, vector stores), implement the `Offloader` protocol — no inheritance required, since it is a structural protocol:
 
 ```python
-from agentscope.workspace import WorkspaceBase
+from typing import Any
 from agentscope.message import Msg, ToolResultBlock
-from typing import Any, Literal
 
-class S3Workspace(WorkspaceBase):
-    type: Literal["s3"] = "s3"
-    bucket: str
-    prefix: str
-
-    async def initialize(self) -> None:
-        # Set up S3 client, create bucket prefix, etc.
-        ...
-
-    async def close(self) -> None:
-        # Clean up connections
-        ...
+class S3Offloader:
+    def __init__(self, bucket: str, prefix: str) -> None:
+        self.bucket = bucket
+        self.prefix = prefix
 
     async def offload_context(
         self,
@@ -211,18 +226,19 @@ class S3Workspace(WorkspaceBase):
         **kwargs: Any,
     ) -> str:
         key = f"{self.prefix}/sessions/{session_id}/tool_result-{tool_result.id}.txt"
-        # Extract text content from tool result blocks
+        # Extract text content from the tool result blocks and upload.
         ...
         return f"s3://{self.bucket}/{key}"
 ```
 
-<Note>
-Context offloading requires a workspace to be attached to the agent. Without a workspace, compressed messages and truncated tool results are discarded after removal from the context window.
-</Note>
+Pass the instance into `Agent(offloader=...)` like any built-in workspace.
 
 ## Further Reading
 
 <CardGroup cols={2}>
+  <Card title="Workspace" icon="folder-tree" href="/v2/building-blocks/workspace">
+    Built-in offloader implementations and the agent's working environment
+  </Card>
   <Card title="Agent" icon="robot" href="/v2/building-blocks/agent">
     The ReAct loop and how context flows through reasoning steps
   </Card>
@@ -231,8 +247,5 @@ Context offloading requires a workspace to be attached to the agent. Without a w
   </Card>
   <Card title="Tool" icon="wrench" href="/v2/building-blocks/tool">
     Tools that produce results subject to compression
-  </Card>
-  <Card title="Permission System" icon="shield" href="/v2/building-blocks/permission-system">
-    How permission context integrates with agent state
   </Card>
 </CardGroup>
