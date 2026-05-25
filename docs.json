@@ -43,12 +43,12 @@
                   {
                     "group": "Deploy",
                     "pages": [
-                      "v2/deploy/agent-service"
+                      "v2/deploy/agent-service",
+                      {
+                        "group": "API",
+                        "openapi": "v2/deploy/openapi.json"
+                      }
                     ]
-                  },
-                  {
-                    "group": "API",
-                    "openapi": "v2/deploy/openapi.json"
                   },
                   {
                     "group": "Others",
@@ -134,7 +134,11 @@
                   {
                     "group": "Deploy & Serve",
                     "pages": [
-                      "v1/deploy-and-serve/agent-as-service"
+                      "v1/deploy-and-serve/agent-as-service",
+                      {
+                        "group": "API",
+                        "openapi": "v2/deploy/openapi.json"
+                      }
                     ]
                   },
                   {
@@ -181,12 +185,12 @@
                   {
                     "group": "部署",
                     "pages": [
-                      "zh/v2/deploy/agent-service"
+                      "zh/v2/deploy/agent-service",
+                      {
+                        "group": "API",
+                        "openapi": "v2/deploy/openapi.json"
+                      }
                     ]
-                  },
-                  {
-                    "group": "API",
-                    "openapi": "v2/deploy/openapi.json"
                   },
                   {
                     "group": "其他",
@@ -210,7 +214,7 @@
         },
         {
           "anchor": "Blog",
-          "href": "https://agentscope.io/blogs/",
+          "href": "https://agentscope.io/blog/",
           "icon": "newspaper"
         }
       ]
