@@ -44,7 +44,7 @@ When the context window fills up, AgentScope keeps it in shape with two automati
 `ContextConfig` is passed to the agent at construction time:
 
 ```python
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.agent import ContextConfig
 
 agent = Agent(
@@ -151,7 +151,7 @@ Offloading is wired through the `Offloader` protocol — a structural contract w
 Pass any object satisfying this protocol to the agent's `offloader` argument. AgentScope's [`workspace`](/v2/building-blocks/workspace) module ships ready-made implementations:
 
 ```python
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.workspace import LocalWorkspace
 
 workspace = LocalWorkspace(workdir="/tmp/agent_workspace")
