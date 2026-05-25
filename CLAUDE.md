@@ -6,34 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AgentScope is a production-ready, multi-agent framework for building LLM-empowered agent applications. This repository contains the documentation for the AgentScope framework, built with Mintlify. The documentation covers core concepts like agents, models, tools, memory, and orchestration, as well as tutorials and API references.
 
-## Repository Structure
-
-- `/basic-concepts` - Core AgentScope concepts (msg, agent, model, context/memory, tool)
-- `/building-blocks` - Advanced building blocks (models, memory, tool capabilities, orchestration)
-- `/tutorial` - Step-by-step tutorials for building agents
-- `/out-of-box-agents` - Pre-built agents for various use cases
-- `/api-reference` - API documentation
-- `/observe-and-evaluate` - Monitoring, observability, and evaluation
-- `/tune-agent` - Agent tuning and optimization guides
-- `/deploy-and-serve` - Deployment and serving options
-- `/essentials` - Essential documentation components and features
-- `/others` - Additional resources including FAQ
-
-## Development Commands
-
-### Prerequisites
-- Node.js version 19 or higher
-
-### Common Commands
-- Install Mintlify CLI: `npm i -g mint`
-- Start local development server: `mint dev`
-- Start local server on custom port: `mint dev --port 3333`
-- Validate broken links: `mint broken-links`
-- Update CLI version: `mint update`
-
-### Local Development
-Use `eval "$(fnm env)" && fnm use 22 && npx mintlify@latest dev` to start the development server and preview your changes.
-
 ## Writing Style Guidelines
 
 Follow these core principles when writing documentation:
@@ -52,6 +24,7 @@ Follow these core principles when writing documentation:
 - Break complex procedures into numbered steps
 - Include prerequisites and context before instructions
 - Provide expected outcomes for each major step
+- Always precede tables, images, diagrams, and code blocks with an explanatory sentence or paragraph that describes what the content shows or demonstrates
 
 ## Mintlify Component Usage
 
