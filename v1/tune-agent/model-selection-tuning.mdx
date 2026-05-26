@@ -81,7 +81,7 @@ The workflow function executes your agent logic with a given model and returns a
 - Run inference using that model
 - Return a `WorkflowOutput` object containing the model's response
 
-This pattern is identical to the one introduced in [Overview](/tune-agent/tune-your-first-agent#workflow-function). For a complete implementation example — including how to set up an agent, format messages, and return structured output — please refer to that guide.
+This pattern is identical to the one introduced in [Overview](/v1/tune-agent/tune-your-first-agent#workflow-function). For a complete implementation example — including how to set up an agent, format messages, and return structured output — please refer to that guide.
 
 <Note>
 Your function must return `WorkflowOutput`. Do not define custom output classes.
@@ -95,7 +95,7 @@ The judge function evaluates the output of the workflow and assigns a numerical 
 - Compute a scalar `reward` (e.g., accuracy, BLEU score, or inverse latency)
 - Return a `JudgeOutput` object with `reward` and `metrics`
 
-This follows the same contract described in [Overview](/tune-agent/tune-your-first-agent#judge-function). That guide provides a step-by-step example of building a correctness-based judge.
+This follows the same contract described in [Overview](/v1/tune-agent/tune-your-first-agent#judge-function). That guide provides a step-by-step example of building a correctness-based judge.
 
 ## Using Built-in Judges
 

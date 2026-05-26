@@ -206,7 +206,7 @@ def my_sync_fn(x: int) -> int:
 
 Token usage is tracked by the model layer and is included in trace metadata where supported. When you connect to **AgentScope Studio**, token consumption is visualized in the Studio UI so you can monitor cost and usage per run. For third-party backends, token-related attributes are exported with the LLM spans according to the OpenTelemetry semantic conventions used by AgentScope.
 
-For programmatic access to usage after a model call, use the `usage` field on the [ChatResponse](/building-blocks/models) returned by the model.
+For programmatic access to usage after a model call, use the `usage` field on the [ChatResponse](/v1/building-blocks/models) returned by the model.
 
 ---
 
@@ -217,4 +217,4 @@ For programmatic access to usage after a model call, use the `usage` field on th
 - Use **tracing_url** to send traces to Arize-Phoenix, Langfuse, Alibaba Cloud CloudMonitor, or any OTLP endpoint.
 - Use **@trace_llm**, **@trace_reply**, **@trace_format**, **@trace_toolkit**, **@trace_embedding**, and **@trace** when implementing custom models, agents, or formatters so they appear in the same trace tree.
 
-For evaluation of agent behavior and benchmarks, see [Evaluation](/observe-and-evaluate/evaluation).
+For evaluation of agent behavior and benchmarks, see [Evaluation](/v1/observe-and-evaluate/evaluation).
