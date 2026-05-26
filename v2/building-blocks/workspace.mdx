@@ -127,7 +127,7 @@ All three implementations share the same `WorkspaceBase` interface, so the same 
 A workspace plugs into `Agent` along two axes — as a source of tools / MCPs / skills, and as the offloader for context compression:
 
 ```python
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.tool import Toolkit
 from agentscope.workspace import LocalWorkspace
 

@@ -45,7 +45,7 @@ The diagram below shows how these hooks nest within the agent lifecycle. `on_sys
 AgentScope packages a set of hooks into a class — a single middleware class can implement any subset of the 5 hook positions at the same time. Pass instances to `Agent(middlewares=[...])` to equip them:
 
 ```python
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.middleware import TracingMiddleware
 
 agent = Agent(
@@ -83,7 +83,7 @@ trace.set_tracer_provider(provider)
 Then attach `TracingMiddleware` to the agent:
 
 ```python
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.middleware import TracingMiddleware
 
 agent = Agent(
@@ -133,7 +133,7 @@ The example below covers 4 positions in a single middleware. Each onion hook rec
 ```python
 from typing import AsyncGenerator, Awaitable, Callable
 
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.event import AgentEvent
 from agentscope.message import Msg
 from agentscope.middleware import MiddlewareBase

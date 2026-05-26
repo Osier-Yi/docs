@@ -99,7 +99,7 @@ Set the mode via `AgentState.permission_context` when creating the agent, or upd
 
 <CodeGroup>
 ```python At initialization
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.state import AgentState
 from agentscope.permission import PermissionContext, PermissionMode
 
@@ -220,7 +220,7 @@ For AgentScope's built-in tools, the patterns are as follows:
 **At initialization** — pass rules into `PermissionContext` when creating the agent:
 
 ```python
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.state import AgentState
 from agentscope.permission import (
     PermissionContext, PermissionMode, PermissionRule, PermissionBehavior

@@ -63,7 +63,7 @@ Pass parameters to `Agent(...)` at initialization. The examples below cover the 
 <CodeGroup>
 
 ```python Minimal Setup
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
 
@@ -79,7 +79,7 @@ agent = Agent(
 
 ```python With Tools / MCP / Skills
 import os
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.tool import Toolkit, Bash, Edit, Grep, Read, Write
 from agentscope.mcp import MCPClient, HttpMCPConfig
 from agentscope.model import DashScopeChatModel
@@ -109,7 +109,7 @@ agent = Agent(
 ```
 
 ```python With Custom Context Config
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.agent import ContextConfig
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
@@ -366,7 +366,7 @@ Use `reply_stream` when building interactive UIs — it lets you detect pause ev
 
 ```python
 import asyncio
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.state import AgentState
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
