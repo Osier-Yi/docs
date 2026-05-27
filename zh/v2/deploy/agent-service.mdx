@@ -3,7 +3,7 @@ title: "Agent Service"
 description: "把 agent 部署为多租户、多会话的 HTTP 服务"
 ---
 
-Agent Service 是基于 FastAPI 的托管层，把 AgentScope 的 agent 转化为**多租户、多会话的 HTTP 服务**。它接管 agent *外围*的全部职责 —— 请求路由、按用户的资源生命周期、会话状态、持久化、调度，以及工具调用的卸载，让基于 [`Agent`](/v2/building-blocks/agent) 编写的代码无需重写即可承接生产流量。
+Agent Service 是基于 FastAPI 的托管层，把 AgentScope 的 agent 转化为**多租户、多会话的 HTTP 服务**。它接管 agent *外围*的全部职责 —— 请求路由、按用户的资源生命周期、会话状态、持久化、调度，以及工具调用的卸载，让基于 [`Agent`](/zh/v2/building-blocks/agent) 编写的代码无需重写即可承接生产流量。
 
 它的特点：
 
@@ -62,7 +62,7 @@ flowchart TB
 
 ### User
 
-Agent Service 自身不建模用户系统。`user_id` 是通过 `get_current_user_id` 依赖解析出的不透明租户标识 —— 替换该依赖即可对接任何身份系统（JWT、OAuth2、session cookie、SSO、API token）。详见[扩展鉴权](#extend-authentication)。
+Agent Service 自身不建模用户系统。`user_id` 是通过 `get_current_user_id` 依赖解析出的不透明租户标识 —— 替换该依赖即可对接任何身份系统（JWT、OAuth2、session cookie、SSO、API token）。详见[用户鉴权](#用户鉴权)。
 
 ### Credential
 
@@ -165,7 +165,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
   持久化 agent、session、credential、message、schedule 的 storage 后端。其生命周期（`__aenter__` / `__aexit__`）由应用 lifespan 管理。
 </ParamField>
 <ParamField path="workspace_manager" type="WorkspaceManagerBase | None" default="None">
-  以 TTL 缓存方式管理 workspace（文件存储、MCP server、skill）。内置 `LocalWorkspaceManager` 按 agent 隔离；其他策略见 [Workspace 实现与隔离](#workspace-implementation-and-isolation)。
+  以 TTL 缓存方式管理 workspace（文件存储、MCP server、skill）。内置 `LocalWorkspaceManager` 按 agent 隔离；其他策略见 [Workspace 实现与隔离](#workspace-实现与隔离)。
 </ParamField>
 <ParamField path="extra_credentials" type="list[Type[CredentialBase]] | None" default="None">
   额外注册的 credential 类型。每个类在应用启动前被注入 `CredentialFactory`。
@@ -181,7 +181,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 </ParamField>
 
 <Warning>
-默认的 `X-User-ID` header 不提供任何鉴权。生产部署前请替换为真实的鉴权方案 —— 见[用户鉴权](#user-authentication)。
+默认的 `X-User-ID` header 不提供任何鉴权。生产部署前请替换为真实的鉴权方案 —— 见[用户鉴权](#用户鉴权)。
 </Warning>
 
 ### 典型操作流程
@@ -275,7 +275,7 @@ Service 在每个基础设施边界上都开放扩展。下面分节说明哪些
 
 ### Agent 聊天协议
 
-Chat 端点通过 SSE 输出 AgentScope 原生的 [`AgentEvent`](/v2/building-blocks/message-and-event) 流。要让同一 agent 服务于不同前端协议，安装协议 middleware 拦截 SSE 流并改写每帧。
+Chat 端点通过 SSE 输出 AgentScope 原生的 [`AgentEvent`](/zh/v2/building-blocks/message-and-event) 流。要让同一 agent 服务于不同前端协议，安装协议 middleware 拦截 SSE 流并改写每帧。
 
 AgentScope 内置 `AGUIProtocolMiddleware` 适配 [AG-UI](https://docs.ag-ui.com/) 协议。通过 `extra_middlewares` 装载：
 
@@ -604,16 +604,16 @@ Router 通过 FastAPI 的 `Depends()` 拿到应用状态。标准注入项如下
 ## 延伸阅读
 
 <CardGroup cols={2}>
-  <Card title="Agent" icon="robot" href="/v2/building-blocks/agent">
+  <Card title="Agent" icon="robot" href="/zh/v2/building-blocks/agent">
     Agent 抽象与 ReAct 循环
   </Card>
-  <Card title="Message & Event" icon="envelope" href="/v2/building-blocks/message-and-event">
+  <Card title="Message & Event" icon="envelope" href="/zh/v2/building-blocks/message-and-event">
     事件流与消息重建
   </Card>
-  <Card title="Tool" icon="wrench" href="/v2/building-blocks/tool">
+  <Card title="Tool" icon="wrench" href="/zh/v2/building-blocks/tool">
     内置与自定义 tool，包括外部执行
   </Card>
-  <Card title="Context" icon="database" href="/v2/building-blocks/context">
+  <Card title="Context" icon="database" href="/zh/v2/building-blocks/context">
     上下文压缩与 workspace offloading
   </Card>
 </CardGroup>

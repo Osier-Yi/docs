@@ -14,14 +14,14 @@ description: "AgentScope v2.0 常见问题"
   <Accordion title="AgentScope 是否支持沙箱化执行？">
     支持。**Workspace** 是 AgentScope 为 agent 提供的执行环境抽象，内置三种实现 —— `LocalWorkspace`（宿主文件系统）、`DockerWorkspace`（容器）、`E2BWorkspace`（E2B 云沙箱），共享同一份接口，因此同一份 agent 代码可以无差别地在任意后端上运行。Workspace 同时负责管理 MCP server 生命周期、skill 与上下文 offload。
 
-    完整介绍见 [Workspace](/v2/building-blocks/workspace)，包括如何把 workspace 接入 `Agent`，以及多租户场景下的 `WorkspaceManager`。
+    完整介绍见 [Workspace](/zh/v2/building-blocks/workspace)，包括如何把 workspace 接入 `Agent`，以及多租户场景下的 `WorkspaceManager`。
   </Accordion>
 
   <Accordion title="AgentScope 2.0 有配套的前端吗？">
     有，分两个层次：
 
     - **TypeScript SDK** —— 通过 `pnpm install @agentscope-ai/agentscope` 安装，对齐 Python 端的 `Msg` 与 `Event` 类型，前端无需重写协议即可消费 agent 的流式输出。
-    - **前端 UI** —— 面向 [Agent Service](/v2/deploy/agent-service) 的开箱即用 Web 应用，开发者无需自行编写 UI 即可直接体验已部署的 agent。
+    - **前端 UI** —— 面向 [Agent Service](/zh/v2/deploy/agent-service) 的开箱即用 Web 应用，开发者无需自行编写 UI 即可直接体验已部署的 agent。
   </Accordion>
 
   <Accordion title="2.0 还会提供 RAG 和 long-term memory 吗？">

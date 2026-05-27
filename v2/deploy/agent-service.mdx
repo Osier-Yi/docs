@@ -62,7 +62,7 @@ Understanding this graph upfront makes the REST API self-explanatory — most en
 
 ### User
 
-Agent Service models no user system of its own. `user_id` is an opaque tenant identifier resolved through the `get_current_user_id` dependency — replace it with a one-function adapter to whatever identity system you use (JWT, OAuth2, session cookies, SSO, API tokens). See [Extend Authentication](#extend-authentication).
+Agent Service models no user system of its own. `user_id` is an opaque tenant identifier resolved through the `get_current_user_id` dependency — replace it with a one-function adapter to whatever identity system you use (JWT, OAuth2, session cookies, SSO, API tokens). See [User authentication](#user-authentication).
 
 ### Credential
 
