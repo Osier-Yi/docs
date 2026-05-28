@@ -124,6 +124,29 @@ When no `TracerProvider` is configured, every hook short-circuits directly to `n
 When the agent receives an `ExternalExecutionResultEvent` (a tool executed outside the agent), `TracingMiddleware` synthesizes a compensating span for each external execution result, preserving full observability for tools run by external systems.
 </Info>
 
+#### Add Additional Spans
+
+To trace custom operations within the agent lifecycle, use the [standard OpenTelemetry Python SDK](https://opentelemetry.io/docs/languages/python/) directly. Obtain a tracer scoped to AgentScope and wrap any target code in a span:
+
+```python
+from opentelemetry import trace
+from agentscope import __version__
+
+tracer = trace.get_tracer("agentscope", __version__)
+
+with tracer.start_as_current_span(
+    name="your_span_name",
+    attributes={
+        # Optional key-value pairs attached to the span,
+        # e.g. function name, input arguments, or any custom metadata.
+    },
+    end_on_exit=True,
+) as span:
+    # your code here
+```
+
+These custom spans are emitted alongside AgentScope's built-in spans and delivered to the same OTLP collector configured in the `TracerProvider`.
+
 ## Custom Middleware
 
 Subclass `MiddlewareBase` and implement only the hooks you need — leave the rest alone.

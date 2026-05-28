@@ -124,6 +124,29 @@ agent = Agent(
 Agent 收到 `ExternalExecutionResultEvent`（外部执行的工具结果）时，`TracingMiddleware` 会为每条外部执行结果合成一个补偿 span，让外部系统执行的工具也能保留完整可观测性。
 </Info>
 
+#### 添加自定义 Span
+
+如需在 agent 生命周期内追踪自定义操作，可直接使用 [OpenTelemetry Python SDK](https://opentelemetry.io/docs/languages/python/)。获取一个作用域为 AgentScope 的 tracer，并将目标代码包裹在 span 中：
+
+```python
+from opentelemetry import trace
+from agentscope import __version__
+
+tracer = trace.get_tracer("agentscope", __version__)
+
+with tracer.start_as_current_span(
+    name="your_span_name",
+    attributes={
+        # 附加到 span 上的可选键值对，
+        # 例如函数名、入参或任何自定义元数据。
+    },
+    end_on_exit=True,
+) as span:
+    # 你的代码
+```
+
+这些自定义 span 会与 AgentScope 内置的 span 一并上报，发送到 `TracerProvider` 中配置的同一个 OTLP collector。
+
 ## 自定义 Middleware
 
 继承 `MiddlewareBase`，只实现需要的 hook 即可，其它的不用管。
