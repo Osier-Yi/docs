@@ -44,7 +44,7 @@ Message content is composed of typed blocks. Each block represents a distinct pi
 | `ThinkingBlock`   | Model reasoning (chain-of-thought)                  | assistant               |
 | `ToolCallBlock`   | A tool invocation with name, input, and state       | assistant               |
 | `ToolResultBlock` | The output of a tool execution                      | assistant               |
-| `HintBlock`       | Instructions injected into the loop as user context | assistant               |
+| `HintBlock`       | Out-of-band hint injected into the conversation (e.g. a scheduled-task trigger, a team message, a background-tool result). The `hint` field is `str` for plain text or `list[TextBlock \| DataBlock]` for multimodal payloads; `source` carries a small JSON tag the frontend uses to label the hint's origin. | assistant               |
 
 <Note>
 Role constraints are enforced at construction: `user` messages can only contain `TextBlock` and `DataBlock`; `system` messages can only contain `TextBlock`; `assistant` messages can contain all block types.
@@ -381,6 +381,27 @@ Events are grouped by category below. Every event also carries a `reply_id` fiel
     | `reply_id` | `str` | ID of the reply message |
     | `execution_results` | `list[ToolResultBlock]` | Results returned by the external executor |
   </Accordion>
+
+  <Accordion title="One-shot Events">
+    Unlike text / thinking / data / tool blocks, these events do not follow the start → delta → end pattern. The full payload arrives in a single event because it is known up-front rather than streamed.
+
+    **HintBlockEvent** — A `HintBlock` is injected into the agent's context (e.g. a scheduled-task trigger, a team message, a result returned by an offloaded background tool).
+
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `reply_id` | `str` | ID of the reply message |
+    | `block_id` | `str` | Unique identifier of the hint block |
+    | `hint` | `str \| list[TextBlock \| DataBlock]` | The hint payload — plain text or a list of multimodal blocks |
+    | `source` | `str \| None` | Optional sender / origin tag (typically a small JSON object describing how the frontend should label this hint) |
+
+    **CustomEvent** — Generic extensible event used by service-layer middleware to notify subscribers about state changes (task progress, team membership, permission updates, …) without polluting the core agent event enum.
+
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `reply_id` | `str` | ID of the reply message |
+    | `name` | `str` | The signal name (e.g. `"tasks_context"`, `"team_updated"`) |
+    | `value` | `dict` | Arbitrary JSON-serialisable payload for this signal |
+  </Accordion>
 </AccordionGroup>
 
 ## Reconstruct Messages from Events
@@ -420,6 +441,7 @@ The `append_event` method handles all event types:
 | `ToolResultTextDeltaEvent` | Appends text to the tool result's output |
 | `ToolResultDataDeltaEvent` | Appends a binary data block to the tool result's output |
 | `ToolResultEndEvent` | Sets the tool result's final `state` |
+| `HintBlockEvent` | Appends a `HintBlock` to content (carrying the event's `hint` and `source`) so the hint is persisted and replayable |
 | `RequireUserConfirmEvent` | Updates tool call states to `ASKING` |
 | `ExternalExecutionResultEvent` | Appends `ToolResultBlock`s to content |
 

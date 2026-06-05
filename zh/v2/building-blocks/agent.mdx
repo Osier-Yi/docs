@@ -63,7 +63,7 @@ flowchart TD
 <CodeGroup>
 
 ```python 最简配置
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
 
@@ -79,7 +79,7 @@ agent = Agent(
 
 ```python 配置工具 / MCP / 技能
 import os
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.tool import Toolkit, Bash, Edit, Grep, Read, Write
 from agentscope.mcp import MCPClient, HttpMCPConfig
 from agentscope.model import DashScopeChatModel
@@ -109,7 +109,7 @@ agent = Agent(
 ```
 
 ```python 自定义上下文配置
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.agent import ContextConfig
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
@@ -167,7 +167,7 @@ from agentscope.message import UserMsg
 async def main():
     msg = UserMsg(name="user", content="当前目录有哪些文件？")
     result = await agent.reply(msg)
-    print(result.get_text())
+    print(result.get_text_content())
 
 asyncio.run(main())
 ```
@@ -366,7 +366,7 @@ await agent.compress_context(
 
 ```python
 import asyncio
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.state import AgentState
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
@@ -402,7 +402,7 @@ async def main():
         result = await agent.reply(
             UserMsg(name="user", content="继续之前的任务。"),
         )
-        print(result.get_text())
+        print(result.get_text_content())
 
         # 将更新后的状态持久化回 Redis
         await storage.update_session_state(
