@@ -125,7 +125,7 @@ bash = Bash(
 
 `check_permissions()` —— `Write` 与 `Edit` 共用同一权限逻辑：
 
-1. **危险路径保护** —— 操作敏感文件（`.bashrc`、`.env`、`.ssh/`）返回带 `bypass_immune=True` 的 ASK，allow 规则无法静默授权。`BYPASS` 模式下该 ASK 仍然被跳过（BYPASS 明确选择放弃 safety 提示），`DONT_ASK` 下被转为 DENY。完整契约见[权限系统文档](/v2/building-blocks/permission-system#safety-check-契约)。
+1. **危险路径保护** —— 操作敏感文件（`.bashrc`、`.env`、`.ssh/`）返回带 `bypass_immune=True` 的 ASK，allow 规则无法静默授权。`BYPASS` 模式下该 ASK 仍然被跳过（BYPASS 明确选择放弃 safety 提示），`DONT_ASK` 下被转为 DENY。完整契约见[权限系统文档](/zh/v2/building-blocks/permission-system#safety-check-契约)。
 2. **ACCEPT_EDITS 模式** —— 自动放行配置工作目录内的文件操作
 3. **PASSTHROUGH** —— 交给权限引擎做规则匹配
 
@@ -185,7 +185,7 @@ class WebSearch(ToolBase):
 自定义 tool 写带安全语义的逻辑时，有两个扩展钩子值得了解：
 
 - **`check_read_only(tool_input)`** —— 当某次调用是否修改状态取决于输入时覆写（例如 `Bash`：`ls` 是只读，`rm` 不是）。默认返回 `is_read_only` 静态属性。权限引擎在判定 EXPLORE / ACCEPT_EDITS 是否自动放行时调用。
-- **`PermissionDecision(..., bypass_immune=True)`** —— 在返回的 ASK 上设置，把它标记为 allow 规则无法静默的 safety check（例如 `DeployTool` 标记 `prod-*` 目标）。各 mode 下的具体处理见 [safety check 契约](/v2/building-blocks/permission-system#safety-check-契约)。
+- **`PermissionDecision(..., bypass_immune=True)`** —— 在返回的 ASK 上设置，把它标记为 allow 规则无法静默的 safety check（例如 `DeployTool` 标记 `prod-*` 目标）。各 mode 下的具体处理见 [safety check 契约](/zh/v2/building-blocks/permission-system#safety-check-契约)。
 </Note>
 
 ### 把函数包装为 Tool

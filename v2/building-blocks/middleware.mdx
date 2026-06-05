@@ -46,7 +46,7 @@ The diagram below shows how these hooks nest within the agent lifecycle. `on_sys
 
 ## Equip Middleware
 
-AgentScope packages a set of hooks into a class — a single middleware class can implement any subset of the 5 hook positions at the same time. Pass instances to `Agent(middlewares=[...])` to equip them:
+AgentScope packages a set of hooks into a class — a single middleware class can implement any subset of the 6 hook positions (plus the optional `list_tools` tool-provider hook) at the same time. Pass instances to `Agent(middlewares=[...])` to equip them:
 
 ```python
 from agentscope.agent import Agent

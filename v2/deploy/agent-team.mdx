@@ -46,8 +46,6 @@ Team communication reuses the same inbox + wakeup primitives the service uses fo
 
 This means workers run *concurrently* on the same service — they are not nested coroutines under the leader. The leader observes a worker's progress by reading its session stream, or by having the worker `TeamSay` back to it.
 
-{/* TODO: flesh out with usage examples, lifecycle diagrams, permission inheritance details, and an end-to-end walkthrough. */}
-
 ## See also
 
 <CardGroup cols={2}>
