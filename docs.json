@@ -45,6 +45,7 @@
                     "group": "Deploy",
                     "pages": [
                       "v2/deploy/agent-service",
+                      "v2/deploy/agent-team",
                       {
                         "group": "API",
                         "openapi": "v2/deploy/openapi.json"
@@ -188,6 +189,7 @@
                     "group": "部署",
                     "pages": [
                       "zh/v2/deploy/agent-service",
+                      "zh/v2/deploy/agent-team",
                       {
                         "group": "API",
                         "openapi": "v2/deploy/openapi.json"

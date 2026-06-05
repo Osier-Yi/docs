@@ -7,7 +7,7 @@ description: "Intercept and extend agent behavior at key lifecycle points"
 
 Agent middleware is the mechanism for injecting custom logic — logging, tracing, input rewriting, access control — into key points of the agent execution pipeline, without modifying the agent or model code.
 
-AgentScope exposes 5 hook positions, covering the full path from the outer reply process down to the raw model API call:
+AgentScope exposes 6 hook positions plus a tool-provider hook, covering the full path from the outer reply process down to the raw model API call:
 
 | Position | Type | Description |
 |----------|------|-------------|
@@ -15,18 +15,22 @@ AgentScope exposes 5 hook positions, covering the full path from the outer reply
 | `on_reasoning` | Onion | Wraps a single ReAct round's reasoning step (input assembly → model call → stream decoding) |
 | `on_acting` | Onion | Wraps a single tool call execution |
 | `on_model_call` | Onion | Wraps the underlying `ChatModel` API call — the closest to the model |
+| `on_compress_context` | Onion | Wraps `Agent.compress_context()` — fires before each reasoning step when the agent decides whether to compress its context |
 | `on_system_prompt` | Transformer | Fires every time the system prompt is assembled; multiple middlewares chain in sequence, each transforming the previous one's output |
+| `list_tools` | Tool source | Optional. Returns a `list[ToolBase]` that the middleware contributes. **Not invoked automatically** — the caller assembling the agent's toolkit decides whether to call it and how to merge the result. |
 
-The two types differ as follows:
+The three types differ as follows:
 
 - **Onion** — middleware wraps the next handler, allowing logic before/after `next_handler()` and observation of the intermediate event stream.
 - **Transformer** — middlewares form a pipeline; the previous one's output feeds into the next one. There is no "inner layer" concept.
+- **Tool source** — not a hook on the runtime path. `Agent.__init__` does not call `list_tools()`; you opt in explicitly by collecting the tools from your middlewares and passing them into the toolkit yourself.
 
-The diagram below shows how these hooks nest within the agent lifecycle. `on_system_prompt` is embedded inside `on_reasoning` because it fires when the reasoning step assembles the system prompt:
+The diagram below shows how these hooks nest within the agent lifecycle. `on_system_prompt` is embedded inside `on_reasoning` because it fires when the reasoning step assembles the system prompt; `on_compress_context` sits at the top of each ReAct round, before reasoning:
 
 <Tree>
   <Tree.Folder name="on_reply" defaultOpen>
     <Tree.Folder name="ReAct loop (per round)" defaultOpen>
+      <Tree.File name="on_compress_context (context compression decision)" />
       <Tree.Folder name="on_reasoning" defaultOpen>
         <Tree.File name="on_system_prompt (system prompt assembly)" />
         <Tree.File name="on_model_call (model API call)" />
@@ -42,7 +46,7 @@ The diagram below shows how these hooks nest within the agent lifecycle. `on_sys
 
 ## Equip Middleware
 
-AgentScope packages a set of hooks into a class — a single middleware class can implement any subset of the 5 hook positions at the same time. Pass instances to `Agent(middlewares=[...])` to equip them:
+AgentScope packages a set of hooks into a class — a single middleware class can implement any subset of the 6 hook positions (plus the optional `list_tools` tool-provider hook) at the same time. Pass instances to `Agent(middlewares=[...])` to equip them:
 
 ```python
 from agentscope.agent import Agent
@@ -151,7 +155,7 @@ These custom spans are emitted alongside AgentScope's built-in spans and deliver
 
 Subclass `MiddlewareBase` and implement only the hooks you need — leave the rest alone.
 
-The example below covers 4 positions in a single middleware. Each onion hook receives an `input_kwargs` dict carrying the fields that flow into the wrapped layer; forward it with `next_handler(**input_kwargs)`, or pass keyword arguments to override specific fields:
+The example below covers every position in a single middleware. Each onion hook receives an `input_kwargs` dict carrying the fields that flow into the wrapped layer; forward it with `next_handler(**input_kwargs)`, or pass keyword arguments to override specific fields:
 
 ```python
 from typing import AsyncGenerator, Awaitable, Callable
@@ -161,10 +165,11 @@ from agentscope.event import AgentEvent
 from agentscope.message import Msg
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
+from agentscope.tool import ToolBase
 
 
 class FullObservabilityMiddleware(MiddlewareBase):
-    """Observe reply, reasoning, model_call, and system_prompt at once."""
+    """Observe every middleware position at once, plus contribute a tool."""
 
     async def on_reply(
         self,
@@ -204,6 +209,17 @@ class FullObservabilityMiddleware(MiddlewareBase):
         print("[model_call] done")
         return result
 
+    async def on_compress_context(
+        self,
+        agent: Agent,
+        # {"context_config": ContextConfig | None}
+        input_kwargs: dict,
+        next_handler: Callable[..., Awaitable[None]],
+    ) -> None:
+        print(f"[compress_context] checking context for {agent.name}")
+        await next_handler(**input_kwargs)
+        print("[compress_context] done")
+
     async def on_system_prompt(
         self,
         agent: Agent,
@@ -211,6 +227,12 @@ class FullObservabilityMiddleware(MiddlewareBase):
     ) -> str:
         print(f"[system_prompt] length={len(current_prompt)}")
         return current_prompt
+
+    async def list_tools(self) -> list[ToolBase]:
+        # Optional hook. Not invoked automatically by ``Agent.__init__``;
+        # if you want these tools available to the agent, collect them
+        # from your middlewares yourself and pass them into the toolkit.
+        return []
 ```
 
 ### Execution Order
@@ -241,12 +263,15 @@ The overall execution order of all hooks within a single reply follows the agent
 ```
 on_reply
   └── per ReAct round:
-        ├── compress_context() → on_system_prompt (token counting)
+        ├── on_compress_context → compress_context()
+        │     └── on_system_prompt (token counting before compression)
         ├── on_reasoning
         │     ├── _prepare_model_input() → on_system_prompt
         │     └── on_model_call
         └── on_acting (once per tool call in this round)
 ```
+
+`list_tools` is not part of the per-reply execution path and is not invoked automatically by the agent — it is a convenience interface so a middleware can advertise its own tools. The caller assembling the toolkit decides whether to collect them.
 
 ## Practical Examples
 

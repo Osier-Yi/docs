@@ -44,7 +44,7 @@ description: "智能体通信，与前端流式数据传输"
 | `ThinkingBlock`   | 模型推理过程（思维链）                      | assistant               |
 | `ToolCallBlock`   | 工具调用，包含名称、输入和状态              | assistant               |
 | `ToolResultBlock` | 工具执行结果                                | assistant               |
-| `HintBlock`       | 以用户上下文形式注入循环的指令              | assistant               |
+| `HintBlock`       | 注入到对话中的带外提示（例如调度任务触发、团队消息、后台工具结果）。`hint` 字段为 `str`（纯文本）或 `list[TextBlock \| DataBlock]`（多模态载荷）；`source` 携带一个小的 JSON 标签，前端用其标识提示来源。 | assistant               |
 
 <Note>
 角色约束在构造时强制执行：`user` 消息只能包含 `TextBlock` 和 `DataBlock`；`system` 消息只能包含 `TextBlock`；`assistant` 消息可包含所有块类型。
@@ -381,6 +381,27 @@ sequenceDiagram
     | `reply_id` | `str` | 回复消息 ID |
     | `execution_results` | `list[ToolResultBlock]` | 外部执行器返回的结果 |
   </Accordion>
+
+  <Accordion title="一次性事件">
+    与文本 / 思考 / 数据 / 工具块不同，这些事件不遵循 start → delta → end 模式。完整载荷在单个事件中到达，因为它在事前就已知，无需流式传输。
+
+    **HintBlockEvent** — 一个 `HintBlock` 被注入到智能体上下文中（例如调度任务触发、团队消息、卸载后台工具返回的结果）。
+
+    | 字段 | 类型 | 说明 |
+    |------|------|------|
+    | `reply_id` | `str` | 回复消息 ID |
+    | `block_id` | `str` | 提示块唯一标识符 |
+    | `hint` | `str \| list[TextBlock \| DataBlock]` | 提示载荷 —— 纯文本或多模态块列表 |
+    | `source` | `str \| None` | 可选的发送方 / 来源标签（通常是一个小的 JSON 对象，描述前端应如何标记此提示） |
+
+    **CustomEvent** — 通用可扩展事件，由服务层 middleware 用来通知订阅者状态变更（任务进度、团队成员、权限更新……），无需污染核心 agent 事件枚举。
+
+    | 字段 | 类型 | 说明 |
+    |------|------|------|
+    | `reply_id` | `str` | 回复消息 ID |
+    | `name` | `str` | 信号名称（例如 `"tasks_context"`、`"team_updated"`） |
+    | `value` | `dict` | 该信号任意可 JSON 序列化的载荷 |
+  </Accordion>
 </AccordionGroup>
 
 ## 从事件流重建消息
@@ -388,7 +409,7 @@ sequenceDiagram
 事件与消息并非相互独立，而是同一数据的两种视图。`reply_stream` 产出的每个事件都可以通过 `append_event()` 应用到 `Msg` 上，从而增量地重建完整消息。这保证了最终消息状态可以仅凭事件流完整还原。
 
 ```python
-from agentscope.message import AssistantMsg
+from agentscope.message import Msg, AssistantMsg
 
 msg = None
 
@@ -418,6 +439,7 @@ async for event in agent.reply_stream(user_msg):
 | `ToolResultTextDeltaEvent` | 将文本追加到工具结果的输出 |
 | `ToolResultDataDeltaEvent` | 将二进制数据块追加到工具结果的输出 |
 | `ToolResultEndEvent` | 设置工具结果的最终 `state` |
+| `HintBlockEvent` | 将 `HintBlock` 追加到 content（携带事件的 `hint` 与 `source`），从而持久化并可重放该提示 |
 | `RequireUserConfirmEvent` | 将对应工具调用的状态更新为 `ASKING` |
 | `ExternalExecutionResultEvent` | 将 `ToolResultBlock` 追加到消息内容 |
 
@@ -430,11 +452,11 @@ async for event in agent.reply_stream(user_msg):
 npm 上提供了消息和事件原语的 TypeScript 版本，前端可以使用相同的 `appendEvent` API 从事件流重建消息：
 
 ```bash
-npm install @agentscope-ai/agentscope
+pnpm install @agentscope-ai/agentscope
 ```
 
 ```typescript
-import { AssistantMsg } from "@agentscope-ai/agentscope/message";
+import { AssistantMsg, ReplyStartEvent } from "@agentscope-ai/agentscope/message";
 
 let msg: AssistantMsg | null = null;
 

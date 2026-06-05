@@ -1,5 +1,5 @@
 ---
-title: "Tool"
+title: "工具"
 description: "定义、注册并管理 agent 可调用的能力"
 ---
 
@@ -50,6 +50,7 @@ Python tool 是任意满足 `ToolBase` 接口的对象。AgentScope 提供了一
 | 方法 | 必需 | 说明 |
 |---|---|---|
 | `check_permissions(tool_input, context)` | 是 | 执行前的运行时权限检查；返回 `PermissionDecision` |
+| `check_read_only(tool_input)` | 可选 | 单次调用的只读判定；返回 `bool`。默认返回 `self.is_read_only`。当只读性取决于输入时覆写（例如 `Bash`：`ls` 是只读，`rm` 不是）。权限引擎在决定 EXPLORE / ACCEPT_EDITS 是否自动放行时调用。 |
 | `match_rule(rule_content, tool_input)` | 可选 | 权限系统中的自定义规则匹配；返回 `bool` |
 | `generate_suggestions(tool_input)` | 可选 | 基于本次工具调用生成建议规则；返回 `list[PermissionRule]` |
 | `__call__(**kwargs)` | 可选 | tool 的执行逻辑；返回 `ToolChunk` 或 `AsyncGenerator[ToolChunk, None]`。外部执行 tool 不需要实现。 |
@@ -87,7 +88,9 @@ AgentScope 预置了一组覆盖常见 agent 操作的 tool，实例化后传入
 4. **Sed 约束检查** —— 阻止针对危险文件的就地 `sed -i` → ASK
 5. **危险路径保护** —— 检查命令是否操作敏感配置文件（`.bashrc`、`.ssh/`、`.env`） → ASK
 6. **危险删除检测** —— 捕获指向关键系统路径（`/`、`~`、`/usr`）的 `rm` / `rmdir` → ASK
-7. **ACCEPT_EDITS 模式** —— 该模式下自动放行文件系统命令（`mkdir`、`touch`、`rm`、`mv`、`cp`、`sed`） → ALLOW
+7. **ACCEPT_EDITS 模式** —— 自动放行文件系统命令（`mkdir`、`touch`、`rm`、`rmdir`、`mv`、`cp`、`sed`），**且仅当所有目标路径都在某个配置的工作目录内时**。任一目标路径越出工作集（例如 `cp /etc/hosts /tmp/x`）会落到 PASSTHROUGH 而不自动放行。
+
+`check_read_only()` 在上述第 2 步只读检测器识别出的任何命令上返回 `True`，其余返回 `False`。权限引擎用它在 EXPLORE / ACCEPT_EDITS 决定自动放行，避免重复跑完整的安全分析。
 
 `match_rule()` 使用基于前缀的通配匹配：
 
@@ -122,11 +125,11 @@ bash = Bash(
 
 `check_permissions()` —— `Write` 与 `Edit` 共用同一权限逻辑：
 
-1. **危险路径保护**（不可绕过） —— 操作敏感文件（`.bashrc`、`.env`、`.ssh/`）始终触发 ASK，即使在 BYPASS 模式下亦然
+1. **危险路径保护** —— 操作敏感文件（`.bashrc`、`.env`、`.ssh/`）返回带 `bypass_immune=True` 的 ASK，allow 规则无法静默授权。`BYPASS` 模式下该 ASK 仍然被跳过（BYPASS 明确选择放弃 safety 提示），`DONT_ASK` 下被转为 DENY。完整契约见[权限系统文档](/zh/v2/building-blocks/permission-system#safety-check-契约)。
 2. **ACCEPT_EDITS 模式** —— 自动放行配置工作目录内的文件操作
 3. **PASSTHROUGH** —— 交给权限引擎做规则匹配
 
-`Read` 是只读工具，始终返回 PASSTHROUGH（EXPLORE 模式下的自动放行由引擎处理）。
+`Read` 是只读工具，始终返回 PASSTHROUGH（EXPLORE 与 ACCEPT_EDITS 模式下的自动放行由引擎通过 `check_read_only` 处理）。
 
 `match_rule()` —— 三个 tool 都使用 `fnmatch` 对 `file_path` 参数做 glob 匹配：
 
@@ -177,6 +180,13 @@ class WebSearch(ToolBase):
         results = await do_search(query)
         return ToolChunk(content=[TextBlock(text=results)])
 ```
+
+<Note>
+自定义 tool 写带安全语义的逻辑时，有两个扩展钩子值得了解：
+
+- **`check_read_only(tool_input)`** —— 当某次调用是否修改状态取决于输入时覆写（例如 `Bash`：`ls` 是只读，`rm` 不是）。默认返回 `is_read_only` 静态属性。权限引擎在判定 EXPLORE / ACCEPT_EDITS 是否自动放行时调用。
+- **`PermissionDecision(..., bypass_immune=True)`** —— 在返回的 ASK 上设置，把它标记为 allow 规则无法静默的 safety check（例如 `DeployTool` 标记 `prod-*` 目标）。各 mode 下的具体处理见 [safety check 契约](/zh/v2/building-blocks/permission-system#safety-check-契约)。
+</Note>
 
 ### 把函数包装为 Tool
 
@@ -259,7 +269,7 @@ AgentScope 集成 [Model Context Protocol (MCP)](https://modelcontextprotocol.io
 - **Stateful**（STDIO 或 HTTP） —— 持久会话，需显式 `connect()` / `close()` 生命周期
 - **Stateless**（仅 HTTP） —— 每次调用临时建会话，无需生命周期管理
 
-MCP tool 的命名空间为 `mcp__{server_name}__{tool_name}`，避免冲突；标注了 `readOnlyHint` 的 tool 会被权限系统自动放行。
+MCP tool 的命名空间为 `mcp__{server_name}__{tool_name}`，避免冲突；标注了 `readOnlyHint` 的 tool 被权限系统识别为只读（在 EXPLORE 与 ACCEPT_EDITS 模式下自动放行；DEFAULT 模式下若没有 allow 规则命中，仍然会 ASK）。
 
 ### 注册 MCP Tool
 

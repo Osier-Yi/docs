@@ -7,11 +7,11 @@ description: "Fine-grained control over which tools your agents can execute and 
 
 The permission system intercepts every tool call an agent makes and produces one of three decisions: **allow** the tool to execute, **deny** it, or **ask the user** for confirmation.
 
-Age system combines static configuration with dynamic runtime analysis. Three components drive the decision together:
+The system combines static configuration with dynamic runtime analysis. Three components drive the decision together:
 
 - **Rules** — explicit allow/deny/ask patterns per tool and command, evaluated with highest priority. Rules have two sources: statically pre-configured in `PermissionContext`, or dynamically added when the user accepts a **suggested rule** during an ASK prompt. Suggestions are auto-generated from the current tool call, so accepting one means future identical calls are handled automatically without prompting again.
 - **Mode** — a static global policy set at configuration time; determines default behavior for all calls that match no rules (e.g., `EXPLORE` makes the agent read-only; `DONT_ASK` silently denies unmatched calls).
-- **Built-in checks** — dynamic runtime analysis performed by the tools themselves against actual call inputs: read-only command detection (parsing the bash command at call time) and dangerous path protection (checking the real file path or command target). Because these are runtime checks rather than pre-configured patterns, they are bypass-immune and cannot be overridden by mode or rules.
+- **Built-in checks** — dynamic runtime analysis performed by the tools themselves against actual call inputs: read-only command detection (parsing the bash command at call time) and dangerous path protection (checking the real file path or command target). Tools can mark a safety ASK as **bypass-immune** via `PermissionDecision.bypass_immune=True`; the engine then honors it across `DEFAULT`, `ACCEPT_EDITS`, and `DONT_ASK` (allow rules cannot silence it). `BYPASS` mode is the one exception — it explicitly opts out of all safety ASKs by design.
 
 ```mermaid
 sequenceDiagram
@@ -41,46 +41,105 @@ sequenceDiagram
     end
 ```
 
-<AccordionGroup>
-  <Accordion title="Detailed decision flow">
+Below is the decision flow for each mode. ASK outcomes trigger user confirmation; if the user accepts the auto-generated suggested rule, it is persisted for future calls.
+
+<Tabs>
+  <Tab title="DEFAULT">
 ```mermaid
 flowchart TD
-    A([Tool Call]) --> B{Deny Rules?}
-    B -->|Match| DENY([DENY])
-    B -->|No Match| C{Ask Rules?}
-    C -->|Match| ASK1([ASK])
-    C -->|No Match| D{Tool-Specific Checks}
-    D -->|EXPLORE + write op| DENY
-    D -->|Dangerous path| ASK2([ASK])
-    D -->|Pass| E{Allow Rules?}
-    E -->|Match| ALLOW([ALLOW])
-    E -->|No Match| F{"ACCEPT_EDITS + safe file op?"}
-    F -->|Yes| ALLOW
-    F -->|No| G{"Read-only Bash command?"}
-    G -->|Yes| ALLOW
-    G -->|No| H{BYPASS mode?}
-    H -->|Yes| ALLOW
-    H -->|No| I{DONT_ASK mode?}
-    I -->|Yes| DENY
-    I -->|No| ASK3([ASK])
-    ASK1 --> S[Generate Suggestions]
-    ASK2 --> S
-    ASK3 --> S
-    S --> U{User Confirms?}
-    U -->|Approve| ALLOW
-    U -->|Deny| DENY
-    U -->|Apply Rule| R[Update Context] --> ALLOW
+    A([Tool Call]) --> D1{Deny Rules?}
+    D1 -->|Match| DENY([DENY])
+    D1 -->|No| D2{Ask Rules?}
+    D2 -->|Match| ASK([ASK])
+    D2 -->|No| D3[Tool check_permissions]
+    D3 -->|ALLOW| ALLOW([ALLOW])
+    D3 -->|DENY| DENY
+    D3 -->|"Safety ASK (bypass_immune)"| ASK
+    D3 -->|PASSTHROUGH / other ASK| D4{Allow Rules?}
+    D4 -->|Match| ALLOW
+    D4 -->|No| ASK
     style DENY fill:#ff6b6b,color:#fff
     style ALLOW fill:#51cf66,color:#fff
-    style ASK1 fill:#ffd43b,color:#333
-    style ASK2 fill:#ffd43b,color:#333
-    style ASK3 fill:#ffd43b,color:#333
+    style ASK fill:#ffd43b,color:#333
 ```
-  </Accordion>
-</AccordionGroup>
+  </Tab>
+  <Tab title="EXPLORE">
+```mermaid
+flowchart TD
+    A([Tool Call]) --> E1{Deny Rules?}
+    E1 -->|Match| DENY([DENY])
+    E1 -->|No| E2{Ask Rules?}
+    E2 -->|Match| ASK([ASK])
+    E2 -->|No| E3{check_read_only?}
+    E3 -->|True| ALLOW([ALLOW])
+    E3 -->|False| DENY
+    style DENY fill:#ff6b6b,color:#fff
+    style ALLOW fill:#51cf66,color:#fff
+    style ASK fill:#ffd43b,color:#333
+```
+  </Tab>
+  <Tab title="ACCEPT_EDITS">
+```mermaid
+flowchart TD
+    A([Tool Call]) --> AE1{Deny Rules?}
+    AE1 -->|Match| DENY([DENY])
+    AE1 -->|No| AE2{Ask Rules?}
+    AE2 -->|Match| ASK([ASK])
+    AE2 -->|No| AE3{check_read_only?}
+    AE3 -->|True| ALLOW([ALLOW])
+    AE3 -->|False| AE4[Tool check_permissions]
+    AE4 -->|ALLOW| ALLOW
+    AE4 -->|DENY| DENY
+    AE4 -->|"Safety ASK (bypass_immune)"| ASK
+    AE4 -->|PASSTHROUGH / other ASK| AE5{Allow Rules?}
+    AE5 -->|Match| ALLOW
+    AE5 -->|No| ASK
+    style DENY fill:#ff6b6b,color:#fff
+    style ALLOW fill:#51cf66,color:#fff
+    style ASK fill:#ffd43b,color:#333
+```
+  </Tab>
+  <Tab title="BYPASS">
+```mermaid
+flowchart TD
+    A([Tool Call]) --> B1{Deny Rules?}
+    B1 -->|Match| DENY([DENY])
+    B1 -->|No| B2{Ask Rules?}
+    B2 -->|Match| ASK([ASK])
+    B2 -->|No| B3[Tool check_permissions]
+    B3 -->|ALLOW| ALLOW([ALLOW])
+    B3 -->|DENY| DENY
+    B3 -->|"Any ASK (safety ignored) / PASSTHROUGH"| B4{Allow Rules?}
+    B4 -->|Match or No| ALLOW
+    style DENY fill:#ff6b6b,color:#fff
+    style ALLOW fill:#51cf66,color:#fff
+    style ASK fill:#ffd43b,color:#333
+```
+  </Tab>
+  <Tab title="DONT_ASK">
+```mermaid
+flowchart TD
+    A([Tool Call]) --> DA1{Deny Rules?}
+    DA1 -->|Match| DENY([DENY])
+    DA1 -->|No| DA2{Ask Rules?}
+    DA2 -->|Match| DENY
+    DA2 -->|No| DA3[Tool check_permissions]
+    DA3 -->|ALLOW| ALLOW([ALLOW])
+    DA3 -->|DENY| DENY
+    DA3 -->|"Any ASK (incl. safety)"| DENY
+    DA3 -->|PASSTHROUGH| DA4{Allow Rules?}
+    DA4 -->|Match| ALLOW
+    DA4 -->|No| DENY
+    style DENY fill:#ff6b6b,color:#fff
+    style ALLOW fill:#51cf66,color:#fff
+```
+  </Tab>
+</Tabs>
 
 <Note>
-Deny rules and dangerous path checks are **bypass-immune** — they apply even in `BYPASS` mode.
+**Deny rules** and **explicit ask rules** are always honored, in every mode (including `BYPASS`).
+
+**Tool-emitted safety ASKs** (`bypass_immune=True`) are honored in `DEFAULT`, `ACCEPT_EDITS`, and `DONT_ASK` — they cannot be silenced by allow rules. In `BYPASS` mode they are skipped on purpose: BYPASS's contract is "the user has opted out of safety prompts; only deny/ask rules remain as guardrails."
 </Note>
 
 ## Permission Mode
@@ -89,11 +148,11 @@ AgentScope supports the following modes, each suited to a different deployment s
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
-| `DEFAULT` | All ops require explicit rules or user confirmation | Most secure, recommended default |
-| `ACCEPT_EDITS` | Auto-allow file ops in working directories | Active development with user present |
-| `EXPLORE` | Read-only: allow reads, deny all writes and commands | Code exploration, planning |
-| `BYPASS` | Allow everything (deny/ask rules still apply) | Fully trusted sandbox |
-| `DONT_ASK` | Convert all ASK → DENY | Unattended / scheduled execution |
+| `DEFAULT` | All ops require explicit rules or user confirmation. The only built-in auto-allow is `Bash` recognizing read-only commands (`ls`, `git status`, `cat`, ...) and returning ALLOW. `Read` / `Glob` / `Grep` return PASSTHROUGH and still ASK unless an allow rule matches | Most secure, recommended default |
+| `ACCEPT_EDITS` | Auto-allow file ops in working directories; auto-allow Bash filesystem commands (`mkdir`/`touch`/`rm`/`cp`/`mv`/`sed`) **only when every target path resolves inside a working directory** | Active development with user present |
+| `EXPLORE` | Read-only: allow read-only tools and read-only Bash commands (`ls`, `git status`, `cat`, ...); deny modifications. User-configured DENY/ASK rules take precedence over the read-only auto-allow | Code exploration, planning |
+| `BYPASS` | Skip all permission checks **except** deny/ask rules and tool DENY. **Tool safety ASKs are NOT enforced** (`rm -rf /`, writes to `~/.bashrc`, command injection, etc. all pass through). Use deny rules to protect specific paths | Sandboxed environments or fully trusted runs |
+| `DONT_ASK` | Convert every ASK (default, ASK rules, **and** safety ASKs) to DENY; safe-by-default for non-interactive runs | Unattended / scheduled execution |
 
 Set the mode via `AgentState.permission_context` when creating the agent, or update it at runtime.
 
@@ -260,15 +319,18 @@ result = UserConfirmResultEvent(
     rules=[suggested_rule],  # accepted rules are persisted to the engine
 )
 ```
+
 ## Built-in Checks
 
-Each tool implements a `check_permissions()` method that runs against the actual call inputs at runtime. These checks are bypass-immune — they apply regardless of mode or rules. AgentScope's built-in tools cover three areas:
+Each tool implements a `check_permissions()` method that runs against the actual call inputs at runtime. AgentScope's built-in tools cover three areas:
 
-- **Dangerous path protection** — `Write`, `Edit`, and `Bash` check whether the target file or command touches sensitive paths. Always triggers ASK, even in `BYPASS` mode.
-- **Read-only command detection** — `Bash` parses the command string to detect read-only operations and auto-allows them.
-- **ACCEPT_EDITS mode** — `Write` and `Edit` auto-allow operations on files within configured working directories.
+- **Dangerous path protection** — `Write`, `Edit`, and `Bash` check whether the target file or command touches sensitive paths. Returns a bypass-immune safety ASK that is honored in `DEFAULT`/`ACCEPT_EDITS`/`DONT_ASK` (allow rules cannot silence it). `BYPASS` mode skips it on purpose.
+- **Read-only command detection** — `Bash` parses the command string to detect read-only operations and auto-allows them in **every** mode (including `DEFAULT`). For input-dependent tools like `Bash`, this is exposed via the `check_read_only()` method (see below).
+- **ACCEPT_EDITS mode** — `Write` and `Edit` auto-allow operations on files within configured working directories. `Bash` additionally requires that **every** target path of a filesystem command (`mkdir`/`touch`/`rm`/`cp`/`mv`/`sed`, ...) resolves inside a working directory.
 
-Custom tools can implement their own checks by overriding `check_permissions()`:
+### Custom tools
+
+A custom tool implements `check_permissions()` to add tool-specific permission logic. Tools whose read-only status depends on the input (like `Bash` — `ls` is read-only, `rm` is not) should also override `check_read_only()`.
 
 ```python
 from agentscope.tool import ToolBase
@@ -276,7 +338,18 @@ from agentscope.permission import PermissionContext, PermissionDecision, Permiss
 
 class MyTool(ToolBase):
     name = "MyTool"
+    # Static default. For tools whose answer depends on input, leave
+    # this as the conservative default and override check_read_only().
     is_read_only = False
+
+    async def check_read_only(self, tool_input: dict) -> bool:
+        """Optional: dynamic read-only check.
+
+        Defaults to returning self.is_read_only. Override when whether
+        an invocation modifies state depends on the input. The engine
+        calls this to decide auto-allow in EXPLORE and ACCEPT_EDITS.
+        """
+        return tool_input.get("operation") in {"list", "describe", "get"}
 
     async def check_permissions(
         self,
@@ -285,20 +358,42 @@ class MyTool(ToolBase):
     ) -> PermissionDecision:
         target = tool_input.get("target")
 
-        # Custom safety check: block operations on production resources
+        # Custom safety check: block operations on production resources.
+        # Setting bypass_immune=True makes this ASK survive allow rules
+        # in DEFAULT/ACCEPT_EDITS/DONT_ASK; BYPASS still skips it.
         if target and target.startswith("prod-"):
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
                 message=f"Operation targets production resource: {target}",
+                decision_reason="Safety check: production resource",
+                bypass_immune=True,
             )
 
         # Return PASSTHROUGH to let the engine continue with rules/mode
         return PermissionDecision(behavior=PermissionBehavior.PASSTHROUGH)
 ```
 
+### Safety check contract
+
+A **safety check** is a tool-emitted ASK that the tool considers too dangerous to be silently overridden — e.g. `Write` to `~/.bashrc`, `Bash` with `rm -rf /`. Setting `bypass_immune=True` on the decision asks the engine to surface the ASK to the user even when an allow rule matches or the mode would otherwise auto-allow.
+
+Use it whenever a wrong call would cause damage the user almost certainly didn't intend. Example: a custom `DeployTool` returns `bypass_immune=True` when the target is `prod-*`, so a blanket `allow_rules["DeployTool"] = ["*"]` configured for staging cannot accidentally authorize a production deploy.
+
+The exact handling per mode:
+
+| Mode | `bypass_immune=True` ASK is... |
+|------|-------------------------------|
+| `DEFAULT` | honored — allow rules cannot override it |
+| `ACCEPT_EDITS` | honored — same as `DEFAULT` |
+| `EXPLORE` | not applicable (the engine does not call `check_permissions` in EXPLORE; the read-only verdict is final) |
+| `BYPASS` | **ignored** — BYPASS skips all safety ASKs by design |
+| `DONT_ASK` | converted to DENY (no user available to answer) |
+
+A regular ASK (`bypass_immune=False`, the default) can be overridden by a matching allow rule in `DEFAULT`/`ACCEPT_EDITS`, and is silently allowed by `BYPASS`'s fallback.
+
 ### Read-Only Commands
 
-Common read-only bash commands are auto-allowed without any rules. A compound command (`&&`, `||`, `;`, `|`) is read-only only if **all** subcommands are read-only. Output redirections (`>`, `>>`) always make a command non-read-only.
+Common read-only bash commands are auto-allowed without any rules, in **every mode** (including `DEFAULT`). A compound command (`&&`, `||`, `;`, `|`) is read-only only if **all** subcommands are read-only. Output redirections (`>`, `>>`) always make a command non-read-only.
 
 <AccordionGroup>
   <Accordion title="Full read-only command list">
@@ -315,7 +410,7 @@ Common read-only bash commands are auto-allowed without any rules. A compound co
 ### Dangerous Path Protection
 
 <Warning>
-Operations targeting the following paths always trigger an ASK, even in `BYPASS` mode.
+Operations targeting the following paths trigger a bypass-immune ASK in `DEFAULT`, `ACCEPT_EDITS`, and `DONT_ASK` (converted to DENY in `DONT_ASK`). `BYPASS` mode explicitly skips this check — if you need dangerous-path protection while running in BYPASS, add deny rules for the specific paths.
 </Warning>
 
 | Category | Paths |
@@ -332,8 +427,10 @@ The following examples show how to configure `AgentState.permission_context` for
 
 <CodeGroup>
 ```python Read-only exploration
-# EXPLORE mode: agent can read, grep, and glob freely,
-# but all writes and bash commands are denied automatically.
+# EXPLORE mode: agent can freely use read-only tools (Read, Grep,
+# Glob) and read-only bash commands (`ls`, `git status`, `cat`, ...).
+# Any modification — Write, Edit, or non-read-only bash command — is
+# denied automatically.
 agent = Agent(
     name="explorer",
     system_prompt="...",
@@ -342,7 +439,6 @@ agent = Agent(
         permission_context=PermissionContext(mode=PermissionMode.EXPLORE)
     ),
 )
-# Agents can read/grep/glob freely; all writes and bash commands are denied
 ```
 
 ```python Unattended automation
@@ -366,10 +462,16 @@ agent = Agent(
         )
     ),
 )
-# Only explicitly allowed commands run; everything else is denied silently
+# Only explicitly allowed commands run; everything else (including
+# safety ASKs like `rm -rf /` or writes to ~/.bashrc) is converted
+# to DENY. Prefer DONT_ASK over BYPASS for unattended runs — it keeps
+# the tools' safety net while still never prompting the user.
 ```
 
-```python Block dangerous commands
+```python BYPASS with explicit guardrails
+# BYPASS skips tools' safety ASKs by design — deny rules become the
+# only guardrail. Always pair BYPASS with deny rules for the paths
+# and commands you want to protect.
 agent = Agent(
     name="my_agent",
     system_prompt="...",
@@ -384,10 +486,18 @@ agent = Agent(
                     PermissionRule(tool_name="Bash", rule_content="git push:*",
                                    behavior=PermissionBehavior.DENY, source="userSettings"),
                 ],
+                "Write": [
+                    PermissionRule(tool_name="Write", rule_content="**/.bashrc",
+                                   behavior=PermissionBehavior.DENY, source="userSettings"),
+                    PermissionRule(tool_name="Write", rule_content="**/.ssh/**",
+                                   behavior=PermissionBehavior.DENY, source="userSettings"),
+                ],
             },
         )
     ),
 )
-# Everything allowed except rm and git push (deny rules are bypass-immune)
+# Everything allowed except the deny-listed commands and paths.
+# Without these deny rules, BYPASS would let the agent rm anything,
+# git push anywhere, or overwrite ~/.bashrc — by design.
 ```
 </CodeGroup>

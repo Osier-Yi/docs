@@ -167,7 +167,7 @@ from agentscope.message import UserMsg
 async def main():
     msg = UserMsg(name="user", content="What files are in the current directory?")
     result = await agent.reply(msg)
-    print(result.get_text())
+    print(result.get_text_content())
 
 asyncio.run(main())
 ```
@@ -402,7 +402,7 @@ async def main():
         result = await agent.reply(
             UserMsg(name="user", content="Continue where we left off."),
         )
-        print(result.get_text())
+        print(result.get_text_content())
 
         # Persist the updated state back to Redis
         await storage.update_session_state(

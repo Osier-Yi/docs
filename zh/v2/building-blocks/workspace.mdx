@@ -1,5 +1,5 @@
 ---
-title: "Workspace"
+title: "工作区"
 description: "为 agent 提供工具、skill 与上下文 offload 的执行环境"
 ---
 
@@ -127,7 +127,7 @@ AgentScope 针对三种执行后端提供了对应的 workspace 实现：
 Workspace 从两个角度接入 `Agent` —— 作为 tool / MCP / skill 的来源，以及作为上下文压缩的 offloader：
 
 ```python
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.tool import Toolkit
 from agentscope.workspace import LocalWorkspace
 

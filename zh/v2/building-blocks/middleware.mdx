@@ -1,5 +1,5 @@
 ---
-title: "Middleware"
+title: "中间件"
 description: "在 agent 生命周期的关键位置拦截并扩展行为"
 ---
 
@@ -7,7 +7,7 @@ description: "在 agent 生命周期的关键位置拦截并扩展行为"
 
 Agent middleware 是在不修改 agent 或 model 代码的前提下，向 agent 执行流程中的关键位置注入自定义逻辑（日志、追踪、输入改写、访问控制等）的机制。
 
-AgentScope 中，可以在 5 个位置上设置 hook，覆盖了从外层 reply 流程一路下沉到底层模型 API 调用的全链路：
+AgentScope 暴露了 6 个 hook 位置外加一个 tool-provider hook，覆盖了从外层 reply 流程一路下沉到底层模型 API 调用的全链路：
 
 | 位置 | 类型 | 说明 |
 |------|------|------|
@@ -15,18 +15,22 @@ AgentScope 中，可以在 5 个位置上设置 hook，覆盖了从外层 reply 
 | `on_reasoning` | Onion | 包裹一轮 ReAct 中的推理步骤（输入组装 → 模型调用 → 流式解码） |
 | `on_acting` | Onion | 包裹一次工具调用的执行 |
 | `on_model_call` | Onion | 包裹一次底层 `ChatModel` API 调用，最贴近模型 |
+| `on_compress_context` | Onion | 包裹 `Agent.compress_context()` —— 在每次推理步骤前触发，由 agent 决定是否压缩上下文 |
 | `on_system_prompt` | Transformer | 在每次组装 system prompt 时触发；多个 middleware 串行接力，每一个把上一个的输出再做一次变换 |
+| `list_tools` | Tool source | 可选。返回 middleware 贡献的 `list[ToolBase]`。**不会被自动调用** —— 由组装 agent toolkit 的调用方决定是否调用以及如何合并结果。 |
 
-两种类型的差别：
+三种类型的差别：
 
 - **Onion**（洋葱式）—— middleware 包裹下一层 handler，可以在 `next_handler()` 前后插入逻辑、观察中间事件流。
 - **Transformer**（变换式）—— middleware 之间串成流水线，前一个的输出作为后一个的输入，不存在「内层」概念。
+- **Tool source**（工具来源）—— 不在运行时路径上的 hook。`Agent.__init__` 不会调用 `list_tools()`；需要显式从 middleware 中收集工具并自行传入 toolkit。
 
-下图展示这些 hook 在 agent 生命周期中的嵌套关系。`on_system_prompt` 嵌入在 `on_reasoning` 内部，因为它在 reasoning 步骤组装 system prompt 时被触发：
+下图展示这些 hook 在 agent 生命周期中的嵌套关系。`on_system_prompt` 嵌入在 `on_reasoning` 内部，因为它在 reasoning 步骤组装 system prompt 时被触发；`on_compress_context` 位于每轮 ReAct 顶部，在 reasoning 之前：
 
 <Tree>
   <Tree.Folder name="on_reply" defaultOpen>
     <Tree.Folder name="ReAct loop（每一轮）" defaultOpen>
+      <Tree.File name="on_compress_context（上下文压缩判定）" />
       <Tree.Folder name="on_reasoning" defaultOpen>
         <Tree.File name="on_system_prompt（组装 system prompt）" />
         <Tree.File name="on_model_call（模型 API 调用）" />
@@ -42,10 +46,10 @@ AgentScope 中，可以在 5 个位置上设置 hook，覆盖了从外层 reply 
 
 ## 装备 Middleware
 
-AgentScope 把一组 hook 装在一个类里 —— 同一个 middleware 类可以同时实现 5 个位置中任意子集的 hook。把实例传入 `Agent(middlewares=[...])` 即可装备：
+AgentScope 把一组 hook 装在一个类里 —— 同一个 middleware 类可以同时实现 6 个 hook 位置（外加可选的 `list_tools` tool-provider hook）中的任意子集。把实例传入 `Agent(middlewares=[...])` 即可装备：
 
 ```python
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.middleware import TracingMiddleware
 
 agent = Agent(
@@ -83,7 +87,7 @@ trace.set_tracer_provider(provider)
 随后把 `TracingMiddleware` 装到 agent 上即可：
 
 ```python
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.middleware import TracingMiddleware
 
 agent = Agent(
@@ -151,20 +155,21 @@ with tracer.start_as_current_span(
 
 继承 `MiddlewareBase`，只实现需要的 hook 即可，其它的不用管。
 
-下面的示例用一个 middleware 覆盖了 4 个位置。每个 onion hook 都会收到一个 `input_kwargs` 字典，承载流入下一层的字段，通过 `next_handler(**input_kwargs)` 透传，也可以用关键字参数覆写其中某些字段：
+下面的示例用一个 middleware 覆盖了所有位置。每个 onion hook 都会收到一个 `input_kwargs` 字典，承载流入下一层的字段，通过 `next_handler(**input_kwargs)` 透传，也可以用关键字参数覆写其中某些字段：
 
 ```python
 from typing import AsyncGenerator, Awaitable, Callable
 
-from agentscope import Agent
+from agentscope.agent import Agent
 from agentscope.event import AgentEvent
 from agentscope.message import Msg
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
+from agentscope.tool import ToolBase
 
 
 class FullObservabilityMiddleware(MiddlewareBase):
-    """同时观察 reply、reasoning、model_call、system_prompt 四个位置。"""
+    """同时观察所有 middleware 位置，并贡献一个工具。"""
 
     async def on_reply(
         self,
@@ -204,6 +209,17 @@ class FullObservabilityMiddleware(MiddlewareBase):
         print("[model_call] done")
         return result
 
+    async def on_compress_context(
+        self,
+        agent: Agent,
+        # {"context_config": ContextConfig | None}
+        input_kwargs: dict,
+        next_handler: Callable[..., Awaitable[None]],
+    ) -> None:
+        print(f"[compress_context] checking context for {agent.name}")
+        await next_handler(**input_kwargs)
+        print("[compress_context] done")
+
     async def on_system_prompt(
         self,
         agent: Agent,
@@ -211,6 +227,12 @@ class FullObservabilityMiddleware(MiddlewareBase):
     ) -> str:
         print(f"[system_prompt] length={len(current_prompt)}")
         return current_prompt
+
+    async def list_tools(self) -> list[ToolBase]:
+        # 可选 hook。``Agent.__init__`` 不会自动调用；
+        # 如要让这些工具可被 agent 使用，需要自行从 middleware 中收集
+        # 并传入 toolkit。
+        return []
 ```
 
 ### 执行顺序
@@ -241,12 +263,15 @@ middlewares = [mw1, mw2]
 ```
 on_reply
   └── 每一轮 ReAct：
-        ├── compress_context() → on_system_prompt（统计 token 时）
+        ├── on_compress_context → compress_context()
+        │     └── on_system_prompt（压缩前 token 计数）
         ├── on_reasoning
         │     ├── _prepare_model_input() → on_system_prompt
         │     └── on_model_call
         └── on_acting（本轮每个工具调用一次）
 ```
+
+`list_tools` 不在每次 reply 的执行路径上，agent 不会自动调用它 —— 它是一个便捷接口，让 middleware 可以声明自己的工具。是否收集这些工具由组装 toolkit 的调用方决定。
 
 ## 实用示例
 

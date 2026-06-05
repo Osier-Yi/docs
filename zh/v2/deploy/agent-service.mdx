@@ -1,113 +1,116 @@
 ---
-title: "Agent Service"
-description: "把 agent 部署为多租户、多会话的 HTTP 服务"
+title: "智能体服务"
+description: "把智能体部署为多租户、多会话的 HTTP 服务"
 ---
 
-Agent Service 是基于 FastAPI 的托管层，把 AgentScope 的 agent 转化为**多租户、多会话的 HTTP 服务**。它接管 agent *外围*的全部职责 —— 请求路由、按用户的资源生命周期、会话状态、持久化、调度，以及工具调用的卸载，让基于 [`Agent`](/zh/v2/building-blocks/agent) 编写的代码无需重写即可承接生产流量。
+智能体服务（Agent Service）是基于 FastAPI 把 AgentScope 的智能体转化为**多租户（Multi-tenant）、多会话（Multi-session）的 HTTP 服务**。它接管智能体*外围*的全部职责 —— 请求路由、按用户的资源生命周期、会话（Session）状态、持久化、调度（Schedule），以及工具调用的卸载，让基于 [`Agent`](/zh/v2/building-blocks/agent) 编写的代码无需重写即可承接生产流量。
 
 它的特点：
 
-- **生产级在线 agent 骨架** —— agent 运行、后台任务、调度，以及 tool / MCP / skill / workspace 生命周期端到端纳管，会话事件流可扇出给多个订阅者，重连时还能从缓冲区中重放历史。
-- **Schema 驱动的前端** —— credential 公开 JSON schema，model 暴露声明式卡片（输入 / 输出类型、上下文长度、参数 schema），前端无需绑死特定 provider 的代码即可渲染表单与能力标签。
-- **天然多租户** —— credential、agent、session、schedule、message 都归属于请求的 `user_id`，所有权在路由层强制；一份部署即可服务多用户，无需为每个租户单独编写代码路径。
-- **模块化、可扩展** —— 鉴权、聊天协议、workspace 隔离策略、存储后端，以及 model provider 与 credential 类型集合，全部在边界处开放，可在不动框架代码的前提下替换。
-
-它**不**包含用户鉴权、前端、托管运行时 —— Agent Service 是部署在你自己鉴权网关之后、把 AgentScope agent 暴露给用户的中间层。Agent 业务逻辑、model provider、tool 实现仍由开发者掌握；Service 解决在规模化场景下托管它们所需的基础设施问题。
+- **生产级智能体框架** —— 智能体运行、后台任务、调度，以及工具 / MCP / skill / 工作区（Workspace）生命周期端到端纳管，会话事件流可扇出给多个订阅者，重连时还能从缓冲区中重放历史。
+- **Schema 驱动的前端** —— 凭证（Credential）公开 JSON schema，模型暴露声明式卡片（输入 / 输出类型、上下文长度、参数 schema），前端无需绑死特定 provider 的代码即可渲染表单与能力标签。
+- **天然多租户** —— 凭证、智能体、会话、调度、消息都归属于请求的 `user_id`，所有权在路由层强制；一份部署即可服务多用户，无需为每个租户单独编写代码路径。
+- **模块化、可扩展** —— 鉴权（Authentication）、聊天协议、工作区隔离策略、存储后端，以及模型 provider 与凭证类型集合，全部在边界处开放，可在不动框架代码的前提下替换。
 
 ### 能力概览
 
-| 能力 | 说明 |
-|------|------|
-| 流式聊天 | 通过 SSE 实时推送 `AgentEvent` 对象 |
-| 会话管理 | 持久化会话，跨请求序列化状态 |
-| 会话回放 | 后接入的客户端可通过缓冲重放接收完整事件历史 |
-| 后台任务卸载 | 长耗时工具调用切到后台执行，结果自动回注 |
-| Cron 调度 | 按时间触发 agent 执行，支持有状态或无状态 session |
-| Credential 管理 | 安全存储与读取 model provider 的 API key |
-| 协议适配 | 通过 middleware 转换为外部协议（AG-UI、A2A 等） |
-| Workspace 管理 | 可插拔的 workspace 隔离策略（内置：按 agent；可扩展为按 session 或按用户） |
-
-也可以把内置的 middleware、manager、依赖、storage 实现当作积木，组装出贴合自身基础设施的全自定义服务。
+| 能力                                                | 说明                                                                                      |
+|---------------------------------------------------|-----------------------------------------------------------------------------------------|
+| 智能体团队（Agent Team）                                 | Leader 智能体派生 worker 智能体，并通过内置 team 工具协调它们；详见 [Agent Team](/zh/v2/deploy/agent-team) 章节。 |
+| 工作区管理                                             | 可插拔的工作区隔离策略（内置：智能体隔离；可扩展为按会话或用户隔离），管理智能体的文件系统、MCP client 与 skill。                       |
+| 后台任务卸载（Background Task Offloading）                | 长耗时工具调用切到后台执行，完成时通过会话事件流回送结果。                                                           |
+| Cron 调度                                           | 按时间触发智能体执行，支持有状态或无状态会话；调度持久化保存，跨重启生效。                                                   |
+| 会话回放（Session Replay）                              | 后接入的客户端订阅按会话 SSE 流时，会先收到缓冲历史再接收实时事件，多 tab 或重连前端因此保持同步。                                  |
+| 协议适配（Protocol Adaptation）                         | 通过中间件（Middleware）在 AgentScope 原生事件流之上转换为外部协议（AG-UI、A2A 等）。                              |
+| 分布式部署 <Badge color="yellow" size="sm">WIP</Badge> | 全部共享状态保存在 Redis（存储 + 消息总线（Message Bus））中，多个 worker 进程 —— 或多台节点 —— 可以服务同一个逻辑服务。          |
 
 <Note>
-Service **不**自带用户鉴权系统。它提供 `X-User-ID` header 占位依赖，由开发者替换为自己的鉴权 middleware（JWT、OAuth、session token 等）。
+本服务**不**自带用户鉴权系统。它提供 `X-User-ID` header 占位依赖，由开发者替换为自己的鉴权中间件（JWT、OAuth、session token 等）。
 </Note>
-
-## 资源模型
-
-Agent Service 中的每次操作都归属于从请求中解析出的 `user_id`。在该边界之下，service 管理六类资源，它们之间的关系决定了 REST API 的形态与运行时行为：
-
-```mermaid
-flowchart TB
-    User([User])
-
-    User --> Cred[Credential]
-    User --> Agent[Agent]
-    User --> Sched[Schedule]
-
-    Agent -- "1 : N" --> Session[Session]
-    Session -- "references" --> Cred
-    Session -- "bound to" --> WS[Workspace]
-    Session -- "owns" --> Msg[Messages]
-    Session -- "carries" --> State[AgentState]
-
-    Sched -- "targets" --> Agent
-    Sched -- "triggers" --> Session
-
-    WS -- "holds" --> MCP[MCP Clients]
-    WS -- "holds" --> Skill[Skills]
-```
-
-先理解这张图，REST API 就基本无需额外解释 —— 多数端点只是为已认证用户对其中一种资源做创建、列表或修改。
-
-### User
-
-Agent Service 自身不建模用户系统。`user_id` 是通过 `get_current_user_id` 依赖解析出的不透明租户标识 —— 替换该依赖即可对接任何身份系统（JWT、OAuth2、session cookie、SSO、API token）。详见[用户鉴权](#用户鉴权)。
-
-### Credential
-
-Credential 是某个 model provider（DashScope、OpenAI、Anthropic、Ollama 等）的连接配置 —— 一个 API key 加上 provider 特有的设置。同一用户可以为同一 provider 注册多份 credential —— LLM、TTS、Realtime 服务各用一份，或个人 key 与团队 key 并存 —— 并在多个 agent 与 session 之间复用同一份 credential，让 key 轮换只在一个地方发生。
-
-新增 provider 的方式是继承 `CredentialBase` 并通过 `create_app(extra_credentials=[...])` 注册；客户端无需额外代码即可使用。
-
-### Agent
-
-Agent 记录描述 agent 是谁 —— 展示名、定义角色的 system prompt，以及上下文管理与 ReAct 循环的运行时配置。同一个 agent 可以在多个 session 中由不同 LLM 驱动：身份属于 agent，模型与运行时状态属于 session。
-
-### Workspace
-
-Workspace 是 agent 的运行时环境 —— 一个类文件系统的工作区，统一聚合可用的 tool、MCP、skill，并提供存放压缩上下文以支持 agentic search 的位置。实现可以是本地文件系统（`LocalWorkspace`），也可以是沙箱（`DockerWorkspace`、`E2BWorkspace`）；`WorkspaceManager` 决定 workspace 如何映射到 user、agent 与 session —— 按 user、按 agent（内置默认）、按 session 隔离都是合法策略。
-
-### Session
-
-Session 是用户与 agent 之间一次正在进行的会话。它承载：
-
-- **Agent state** —— 工作记忆、未完成的 reply、permission context；每轮结束后持久化。
-- **消息记录** —— 持久化的用户 / 助手往来，前端基于此渲染；与每轮重新组装的模型上下文窗口不同。
-- **LLM 配置** —— provider、model、参数及调用所用的 credential。由于该配置随 session 走，同一 agent 可以在不同 session 中跑不同模型。
-- **Permission level** —— 限定 agent 可调用的 tool 范围。
-
-### Schedule
-
-Schedule 按 cron 表达式触发 agent。每次触发都在一个 session 内运行 —— 可以每次新建（无状态），也可以复用以让上下文跨次累积（有状态）。Schedule 持久化保存，可在服务重启后恢复。
-
-<Tip>
-要记住的形态：**agent 是可复用的模板，session 是运行时状态的承载单位**，模型绑定在 session 上。
-</Tip>
 
 ## 快速上手
 
-跑起一个 service 至少需要一个 storage 后端与一个 workspace manager。下面的示例在 8000 端口启动一个由 Redis 支撑的 service —— 选择匹配 agent 工具执行位置的 workspace 后端即可。
+体验智能体服务最快的方法是同时运行随仓库附带的示例后端与示例前端 —— 两者都在 AgentScope 仓库内。
+
+### 试用示例
+
+[`examples/agent_service`](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) 目录启动一个开箱即用的服务，[`examples/web_ui`](https://github.com/agentscope-ai/agentscope/tree/main/examples/web_ui) 是与之配套的 React 前端。两者一起运行，几分钟就能体验上述全部能力。
+
+<Frame caption="后台任务卸载 —— 长耗时工具被转入后台，结果到达后唤醒智能体，对话从中断处自然续上。">
+  <img src="/images/bg_tool.gif" alt="后台工具卸载与唤醒演示" />
+</Frame>
+
+<Frame caption="bypass 模式下的权限系统 —— 智能体端到端运行，不为工具调用暂停确认。">
+  <img src="/images/permission_bypass.gif" alt="权限系统 bypass 模式演示" />
+</Frame>
+
+<Frame caption="任务规划 —— 智能体把复杂工作拆成可追踪的计划，并随执行不断更新。">
+  <img src="/images/task.gif" alt="任务规划演示" />
+</Frame>
+
+<Frame caption="智能体团队 —— Leader 智能体派生 worker，并通过内置 team 工具协调它们。">
+  <img src="/images/team.gif" alt="智能体团队协作演示" />
+</Frame>
+
+<Steps>
+  <Step title="克隆仓库">
+    ```bash
+    git clone https://github.com/agentscope-ai/agentscope.git
+    cd agentscope
+    ```
+  </Step>
+  <Step title="启动示例后端">
+    确保本地 Redis 可访问（示例期望 `localhost:6379`），然后启动服务：
+
+    ```bash
+    cd examples/agent_service
+    python main.py
+    ```
+
+    服务在 `http://localhost:8000` 启动。
+  </Step>
+  <Step title="启动示例前端">
+    在另一个终端中安装并运行 web UI：
+
+    ```bash
+    cd examples/web_ui
+    pnpm install
+    pnpm dev
+    ```
+
+    打开 dev server 输出的 URL（通常是 `http://localhost:5173`），前端会连接到第 2 步启动的后端。
+  </Step>
+</Steps>
+
+两者运行起来后，同一个 UI 即可演练服务自带的全部能力：
+
+- **权限控制** —— 触及系统的工具会暂停等待确认；explore 模式将智能体限定在只读操作。
+- **后台任务卸载** —— 长耗时工具调用转入后台，完成后结果流式返回，不阻塞对话。
+- **任务规划** —— 智能体把复杂工作拆成可追踪的计划并随执行更新。
+- **智能体团队** —— Leader 智能体派生 worker，并通过 team 工具协调他们。
+- **计划任务** —— Cron 驱动的智能体自行触发并把结果回报到同一会话流中。
+
+### 嵌入到自己的代码
+
+如果想把服务嵌入到自己的部署中而非运行示例，可使用 `create_app` 自行构造 FastAPI app。运行起一个服务至少需要存储后端、消息总线与工作区管理器（Workspace Manager）。下面的示例在 8000 端口启动一个由 Redis 支撑的服务 —— 选择匹配智能体工具执行位置的工作区后端即可。
 
 <CodeGroup>
 
 ```python 本地文件系统
 import uvicorn
-from agentscope.app import create_app, RedisStorage, LocalWorkspaceManager
+from agentscope.app import create_app
+from agentscope.app.storage import RedisStorage
+from agentscope.app.message_bus import RedisMessageBus
+from agentscope.app.workspace_manager import LocalWorkspaceManager
 
 # Agent、session、credential、message、schedule 的持久化层。
 # 连接池在应用启动时打开、关闭时关闭。
 storage = RedisStorage(host="localhost", port=6379)
+
+# Redis 支撑的消息总线：session 锁、回放日志、收件箱队列与
+# 唤醒信号，将 chat 触发与事件投递解耦，
+# 让多个 worker 进程能共享同一个逻辑 service。
+message_bus = RedisMessageBus(host="localhost", port=6379)
 
 # Workspace 生命周期 —— 工作目录、MCP client、skill。
 # 内置 manager 按 agent 隔离：同一 agent 的所有 session 共享一个 workspace。
@@ -119,6 +122,7 @@ workspace_manager = LocalWorkspaceManager(
 
 app = create_app(
     storage=storage,
+    message_bus=message_bus,
     workspace_manager=workspace_manager,
 )
 
@@ -127,33 +131,45 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 ```python Docker 沙箱
 import uvicorn
-from agentscope.app import create_app, RedisStorage
-from agentscope.app._manager import DockerWorkspaceManager
+from agentscope.app import create_app
+from agentscope.app.storage import RedisStorage
+from agentscope.app.message_bus import RedisMessageBus
+from agentscope.app.workspace_manager import DockerWorkspaceManager
 
-# Agent、session、credential、message、schedule 的持久化层。
 storage = RedisStorage(host="localhost", port=6379)
+message_bus = RedisMessageBus(host="localhost", port=6379)
 
 # 每个 workspace 跑在独立的本地 Docker 容器中实现隔离。
 # 按用户 / agent 划分的宿主工作目录位于 `basedir` 下，挂载进各容器。
 workspace_manager = DockerWorkspaceManager(basedir="/data/docker-workspaces")
 
-app = create_app(storage=storage, workspace_manager=workspace_manager)
+app = create_app(
+    storage=storage,
+    message_bus=message_bus,
+    workspace_manager=workspace_manager,
+)
 uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
 ```python E2B
 import uvicorn
-from agentscope.app import create_app, RedisStorage
-from agentscope.app._manager import E2BWorkspaceManager
+from agentscope.app import create_app
+from agentscope.app.storage import RedisStorage
+from agentscope.app.message_bus import RedisMessageBus
+from agentscope.app.workspace_manager import E2BWorkspaceManager
 
-# Agent、session、credential、message、schedule 的持久化层。
 storage = RedisStorage(host="localhost", port=6379)
+message_bus = RedisMessageBus(host="localhost", port=6379)
 
 # 每个 workspace 跑在远端 E2B 云沙箱中。
 # 通过 `api_key` 显式传入，或设置环境变量 `E2B_API_KEY`。
 workspace_manager = E2BWorkspaceManager()
 
-app = create_app(storage=storage, workspace_manager=workspace_manager)
+app = create_app(
+    storage=storage,
+    message_bus=message_bus,
+    workspace_manager=workspace_manager,
+)
 uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
@@ -162,22 +178,25 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 ### create_app 参数
 
 <ParamField path="storage" type="StorageBase" required>
-  持久化 agent、session、credential、message、schedule 的 storage 后端。其生命周期（`__aenter__` / `__aexit__`）由应用 lifespan 管理。
+  持久化智能体、会话、凭证、消息、调度的存储后端。其生命周期（`__aenter__` / `__aexit__`）由应用 lifespan 管理。
 </ParamField>
-<ParamField path="workspace_manager" type="WorkspaceManagerBase | None" default="None">
-  以 TTL 缓存方式管理 workspace（文件存储、MCP server、skill）。内置 `LocalWorkspaceManager` 按 agent 隔离；其他策略见 [Workspace 实现与隔离](#workspace-实现与隔离)。
+<ParamField path="message_bus" type="MessageBus" required>
+  Redis 支撑的运行时原语 —— 会话锁、回放日志、收件箱队列、唤醒信号 —— 把 chat 触发与事件投递解耦。必填，因为所有把事件投递到前端的代码路径（`POST /chat`、调度触发、团队消息、后台工具完成）都经由它，且它是支撑多进程部署的关键。
+</ParamField>
+<ParamField path="workspace_manager" type="WorkspaceManagerBase" required>
+  以 TTL 缓存方式管理工作区（文件存储、MCP server、skill）。内置 `LocalWorkspaceManager` 按智能体隔离；其他策略见[工作区实现与隔离](#工作区实现与隔离)。
 </ParamField>
 <ParamField path="extra_credentials" type="list[Type[CredentialBase]] | None" default="None">
-  额外注册的 credential 类型。每个类在应用启动前被注入 `CredentialFactory`。
+  额外注册的凭证类型。每个类在应用启动前被注入 `CredentialFactory`。
 </ParamField>
 <ParamField path="extra_middlewares" type="list[Middleware] | None" default="None">
-  额外的 ASGI middleware（例如协议适配器、CORS、鉴权）。
+  额外的 ASGI 中间件（例如协议适配器、CORS、鉴权）。
 </ParamField>
 <ParamField path="extra_agent_middlewares" type="AgentMiddlewareFactory | None" default="None">
-  异步工厂 `(user_id, agent_id, session_id) -> Awaitable[list[MiddlewareBase]]`，在每次组装 agent（即每轮 chat 或每次 schedule 触发）时被调用一次。返回的 middleware 会传给 agent，可用于产出按用户 / 会话区分的 middleware，比如审计日志、租户隔离或自定义鉴权逻辑。
+  异步工厂 `(user_id, agent_id, session_id) -> Awaitable[list[MiddlewareBase]]`，在每次组装智能体（即每轮 chat 或每次 schedule 触发）时被调用一次。返回的中间件会在智能体运行前追加到框架自带的中间件（例如 `ToolOffloadMiddleware`）之后，可用于产出按用户 / 会话区分的中间件，比如审计日志、租户隔离或自定义鉴权逻辑。
 </ParamField>
 <ParamField path="extra_agent_tools" type="AgentToolFactory | None" default="None">
-  异步工厂 `(user_id, agent_id, session_id) -> Awaitable[list[ToolBase]]`，在每次组装 agent 时被调用一次。返回的 tool 会与 workspace 中的 tool 一起合并到 toolkit 的 `"basic"` 分组里，便于按调用者动态决定可用工具（例如按租户接入、按用户使用各自 credential 的工具）。
+  异步工厂 `(user_id, agent_id, session_id) -> Awaitable[list[ToolBase]]`，在每次组装智能体时被调用一次。返回的工具会与工作区派生的工具一起合并到 toolkit 的 `"basic"` 分组里，便于按调用者动态决定可用工具（例如按租户接入、按用户使用各自凭证的工具）。
 </ParamField>
 <ParamField path="title" type="str" default="AgentScope">
   OpenAPI 文档界面中显示的标题。
@@ -195,30 +214,30 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 服务启动后，按资源模型中定义的资源驱动它即可。下面是一次聊天会话通常走过的路径 —— 每一步是一两次 REST 调用。
 
 <Steps>
-  <Step title="创建 agent">
-    注册 agent 身份 —— 展示名、system prompt 与运行时配置。同一 agent 可以在不同 model 下驱动多个 session。
+  <Step title="创建智能体">
+    注册智能体身份 —— 展示名、system prompt 与运行时配置。同一智能体可以在不同模型下驱动多个会话。
 
     ```http
     POST /agent
     ```
   </Step>
-  <Step title="创建并配置 credential">
-    通过 `GET /credential/schemas` 发现各 provider 的表单字段，再保存 API key。一份 credential 可以在多个 session 与 agent 中复用。
+  <Step title="创建并配置凭证">
+    通过 `GET /credential/schemas` 发现各 provider 的表单字段，再保存 API key。一份凭证可以在多个会话与智能体中复用。
 
     ```http
     GET  /credential/schemas
     POST /credential
     ```
   </Step>
-  <Step title="创建 session 并选择 model">
-    创建一个绑定到该 agent 的 session，并附上 model 配置 —— provider、model 名称、参数，以及调用所用的 credential。从此之后由 session 拥有运行时状态。
+  <Step title="创建会话并选择模型">
+    创建一个绑定到该智能体的会话，并附上模型配置 —— provider、模型名称、参数，以及调用所用的凭证。从此之后由会话拥有运行时状态。
 
     ```http
     POST /sessions
     ```
   </Step>
   <Step title="配置 MCP 与 skill（可选）">
-    若 agent 需要超出内置范围的 tool，向 session 的 workspace 附加 MCP client 与 skill。
+    若智能体需要超出内置范围的工具，向会话的工作区附加 MCP client 与 skill。开箱即用的情况下，每个智能体已经能访问工作区的内置工具（文件系统、shell、搜索……）、任务规划工具、调度与后台任务控制工具，以及 —— 当会话是团队 leader 或成员时 —— [Agent Team](/zh/v2/deploy/agent-team) 中描述的团队协调工具。通过 `create_app` 的 `extra_agent_tools` 传入的工具也会一并合入。
 
     ```http
     POST /workspace/mcp
@@ -226,18 +245,19 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
     ```
   </Step>
   <Step title="开始聊天">
-    向 `/chat` POST 一条用户 `Msg`，通过 SSE 接收 agent 事件流。后接入的客户端可以重连同一 session 并重放缓冲事件。
+    向 `/chat` POST 一条用户 `Msg` 触发一次 chat 运行。该端点立刻返回 `{"status": "started", "session_id": "..."}` —— 事件通过按会话 SSE 流 `GET /sessions/{id}/stream` 异步投递；任意数量的客户端可订阅该流，后接入者可重放缓冲历史再接收实时事件。
 
     ```http
     POST /chat
+    GET  /sessions/{session_id}/stream
     ```
   </Step>
 </Steps>
 
-携带 `X-User-ID` header 与单条用户消息的最小 chat 调用：
+触发一次运行：
 
 ```bash
-curl -N -X POST http://localhost:8000/chat \
+curl -X POST http://localhost:8000/chat \
   -H "X-User-ID: alice" \
   -H "Content-Type: application/json" \
   -d '{
@@ -251,37 +271,84 @@ curl -N -X POST http://localhost:8000/chat \
   }'
 ```
 
-对于**计划任务**，完成步骤 1 与 2 后创建一个指向 agent 的 schedule —— scheduler 会按你给定的 cron 表达式创建 session（有状态或无状态）并触发执行。无需调用 `/chat`；cron 触发时 agent 自动运行。
+并行订阅该会话的事件流（也可以在触发前订阅 —— 该流跨多次运行保持打开，并广播会话产出的所有事件，包括调度触发与后台工具完成）：
+
+```bash
+curl -N -H "X-User-ID: alice" \
+  "http://localhost:8000/sessions/session-xxx/stream?agent_id=agent-xxx"
+```
+
+对于**计划任务**，完成步骤 1 与 2 后创建一个指向智能体的 schedule —— scheduler 会按你给定的 cron 表达式创建会话（有状态或无状态）并触发执行。无需调用 `/chat`；cron 触发时智能体自动运行。
 
 ```http
 POST /schedule
 ```
 
+## 资源模型
+
+智能体服务中的每次操作都归属于从请求中解析出的 `user_id`。在该边界之下，服务管理七类资源 —— 六类持久化资源（图左侧）加把它们运行时行为串起来的消息总线（图右侧）：
+
+```mermaid
+flowchart TB
+    User([User])
+
+    User --> Cred[Credential]
+    User --> Agent[Agent]
+    User --> Sched[Schedule]
+
+    Agent -- "1 : N" --> Session[Session]
+    Session -- "references" --> Cred
+    Session -- "bound to" --> WS[Workspace]
+    Session -- "owns" --> Msg[Messages]
+
+    Sched -- "targets" --> Agent
+    Sched -- "triggers" --> Session
+
+    Bus{{MessageBus}}
+    Sched -. "inbox + wakeup" .-> Bus
+    Bus -. "drives runs" .-> Session
+    Session -. "publishes events" .-> Bus
+```
+
+| 资源 | 说明 |
+|------|------|
+| **User** | 从请求中解析出的不透明租户标识。服务自身不建模用户系统；通过 `get_current_user_id` 接入自己的实现。 |
+| **Credential** | 某个模型 provider 的连接配置 —— 一个 API key 加上 provider 特有设置。可在多个智能体与会话间复用。 |
+| **Agent** | 展示名、system prompt 与运行时配置（context、ReAct 循环）。可复用的模板 —— 身份属于智能体，运行时状态属于会话。 |
+| **Workspace** | 智能体的运行时环境 —— 工作目录、MCP client、skill、卸载的上下文。工作区如何映射到 user / agent / session 由工作区管理器决定。 |
+| **Session** | 用户与智能体之间一次正在进行的会话。承载智能体状态（工作记忆、未完成的 reply、permission context）、持久化消息记录，以及该会话运行所用的 LLM 配置。 |
+| **Schedule** | 按 cron 表达式触发智能体。每次触发都在一个会话内运行 —— 可以每次新建（无状态），也可以复用以让上下文跨次累积（有状态）。Schedule 可在重启后保留。 |
+| **MessageBus** | Redis 支撑的运行时层 —— 会话锁、回放日志、收件箱队列、唤醒信号。是调度触发、团队消息与后台工具完成抵达空闲会话的唯一投递通道；也是支撑多进程运行的基础。 |
+
+<Tip>
+要记住的形态：**智能体是可复用的模板，会话是运行时状态的承载单位**，而消息总线则是当外部事件（调度、队友、后台工具）有话要说时把空闲会话唤醒的桥梁。
+</Tip>
+
 ## API 概览
 
-Service 把资源模型中的资源暴露为 REST 端点，外加流式聊天端点。下表按类别分组；完整请求与响应结构由 service 的 OpenAPI 规格描述。
+服务把资源模型中的资源暴露为 REST 端点，外加流式聊天端点。下表按类别分组；完整请求与响应结构由服务的 OpenAPI 规格描述。
 
 | 类别 | 端点 | 说明 |
 |------|------|------|
-| Chat | `POST /chat` | 通过 SSE 流式推送某 session 的 agent 事件；支持回放与多订阅者扇出。 |
-| Sessions | `GET/POST/PATCH/DELETE /sessions` | 创建与管理聊天 session，包括 model 绑定与 permission level。 |
-| Messages | `GET /sessions/{id}/messages` | 分页拉取某 session 的消息记录。 |
-| Agents | `GET/POST/PATCH/DELETE /agent` | 管理 agent 记录 —— 展示名、system prompt、运行时配置。 |
+| Chat | `POST /chat` | 触发某会话的一次 chat 运行；返回 `ChatTriggerResponse` JSON。事件通过按会话流异步投递。 |
+| Session stream | `GET /sessions/{id}/stream` | 按会话的 `AgentEvent` SSE 流，支持后接入者的缓冲回放与多订阅者扇出。 |
+| Sessions | `GET/POST/PATCH/DELETE /sessions` | 创建与管理聊天会话，包括模型绑定与 permission level。 |
+| Messages | `GET /sessions/{id}/messages` | 分页拉取某会话的消息记录。 |
+| Agents | `GET/POST/PATCH/DELETE /agent` | 管理智能体记录 —— 展示名、system prompt、运行时配置。 |
 | Credentials | `GET/POST/PATCH/DELETE /credential` | 各 provider 的 API key 与连接配置 CRUD。 |
-| Credential schemas | `GET /credential/schemas` | 发现已注册的全部 credential 类型及其 JSON 参数 schema，用于表单渲染。 |
+| Credential schemas | `GET /credential/schemas` | 发现已注册的全部凭证类型及其 JSON 参数 schema，用于表单渲染。 |
 | Models | `GET /model?provider=<name>` | 列出某 provider 下的候选模型，附带声明式 `ModelCard`（能力与参数 schema）。 |
-| Schedules | `GET/POST/PATCH/DELETE /schedule` | 管理 cron 触发的 agent 执行，有状态或无状态。 |
-| Background tasks | `GET /background-tasks` | 查看被卸载到后台的工具执行。 |
-| Workspace MCPs | `GET/POST /workspace/mcp`、`DELETE /workspace/mcp/{mcp_name}` | 管理挂在 session workspace 上的 MCP client。 |
-| Workspace skills | `GET/POST /workspace/skill`、`DELETE /workspace/skill/{skill_name}` | 管理 session workspace 中可用的 skill。 |
+| Schedules | `GET/POST/PATCH/DELETE /schedule`、`GET /schedule/{id}/sessions` | 管理 cron 触发的智能体执行，有状态或无状态。 |
+| Workspace MCPs | `GET/POST /workspace/mcp`、`DELETE /workspace/mcp/{mcp_name}` | 管理挂在会话工作区上的 MCP client。 |
+| Workspace skills | `GET/POST /workspace/skill`、`DELETE /workspace/skill/{skill_name}` | 管理会话工作区中可用的 skill。 |
 
 ## 自定义
 
-Service 在每个基础设施边界上都开放扩展。下面分节说明哪些是内置的，以及如何插入自己的实现。
+服务在每个基础设施边界上都开放扩展。下面分节说明哪些是内置的，以及如何插入自己的实现。
 
-### Agent 聊天协议
+### 智能体聊天协议
 
-Chat 端点通过 SSE 输出 AgentScope 原生的 [`AgentEvent`](/zh/v2/building-blocks/message-and-event) 流。要让同一 agent 服务于不同前端协议，安装协议 middleware 拦截 SSE 流并改写每帧。
+按会话流端点（`GET /sessions/{id}/stream`）通过 SSE 输出 AgentScope 原生的 [`AgentEvent`](/zh/v2/building-blocks/message-and-event) 流。要让同一智能体服务于不同前端协议，安装协议中间件拦截 SSE 流并改写每帧。
 
 AgentScope 内置 `AGUIProtocolMiddleware` 适配 [AG-UI](https://docs.ag-ui.com/) 协议。通过 `extra_middlewares` 装载：
 
@@ -309,7 +376,7 @@ class MyProtocolMiddleware(ProtocolMiddlewareBase):
         return {"type": event.type, "data": event.model_dump()}
 ```
 
-Middleware 自动拦截 chat 端点返回的 `StreamingResponse`，把每条 SSE 帧反序列化回 `AgentEvent`，调用 `_convert_to_protocol()` 生成目标格式后重新序列化。
+中间件自动拦截会话流端点返回的 `StreamingResponse`，把每条 SSE 帧反序列化回 `AgentEvent`，调用 `_convert_to_protocol()` 生成目标格式后重新序列化。
 
 ### 用户鉴权
 
@@ -351,7 +418,7 @@ async def get_current_user_id(token: str = Depends(oauth2_scheme)) -> str:
 通过 FastAPI 的依赖覆盖机制把自定义实现挂上去：
 
 ```python
-from agentscope.app._deps import get_current_user_id as default_dependency
+from agentscope.app.deps import get_current_user_id as default_dependency
 
 app.dependency_overrides[default_dependency] = get_current_user_id
 ```
@@ -360,15 +427,15 @@ app.dependency_overrides[default_dependency] = get_current_user_id
 默认的 `X-User-ID` header 不提供鉴权。生产部署前请始终替换为安全机制。
 </Warning>
 
-### Workspace 实现与隔离
+### 工作区实现与隔离
 
 可独立配置两条正交维度：
 
-- **Workspace 后端** —— agent 实际运行所在的运行时环境。内置实现包括 `LocalWorkspace`、`DockerWorkspace`、`E2BWorkspace`。新增后端实现 workspace 接口即可，可包装容器镜像、沙箱或远端虚拟机。
-- **隔离策略** —— workspace 如何映射到 user、agent、session。内置 `LocalWorkspaceManager` 以 `agent_id` 为键：同一 agent 的所有 session 共享一个 workspace。要切换为按 user 或按 session 隔离，继承 `WorkspaceManagerBase` 并按自己的键策略覆写 `get_workspace`。
+- **工作区后端** —— 智能体实际运行所在的运行时环境。内置实现包括 `LocalWorkspace`、`DockerWorkspace`、`E2BWorkspace`。新增后端实现工作区接口即可，可包装容器镜像、沙箱或远端虚拟机。
+- **隔离策略** —— 工作区如何映射到 user、agent、session。内置 `LocalWorkspaceManager` 以 `agent_id` 为键：同一智能体的所有会话共享一个工作区。要切换为按 user 或按 session 隔离，继承 `WorkspaceManagerBase` 并按自己的键策略覆写 `get_workspace`。
 
 ```python
-from agentscope.app import WorkspaceManagerBase
+from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.workspace import WorkspaceBase
 
 
@@ -380,7 +447,7 @@ class PerSessionWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         workspace_id: str,
     ) -> WorkspaceBase:
-        # 取出已初始化的 workspace；按 session_id 作键以实现按 session 隔离。
+        # 取出已初始化的工作区；按 session_id 作键以实现按会话隔离。
         ...
 
     async def create_workspace(
@@ -389,21 +456,21 @@ class PerSessionWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
     ) -> WorkspaceBase:
-        # 分配新的 workspace 并写入缓存。
+        # 分配新的工作区并写入缓存。
         ...
 
     async def close(self, workspace_id: str) -> None:
-        # 关闭并淘汰单个 workspace。
+        # 关闭并淘汰单个工作区。
         ...
 
     async def close_all(self) -> None:
-        # 关闭全部缓存中的 workspace；应用关闭时调用。
+        # 关闭全部缓存中的工作区；应用关闭时调用。
         ...
 ```
 
-### API credential
+### API 凭证
 
-新增 credential 类型由两类组成：一个 `CredentialBase` 子类负责描述连接配置（并发布 JSON schema 用于表单渲染），一个 `ChatModelBase` 子类实现针对该 provider API 的流式聊天协议。Credential 类是入口 —— 它告诉 service 该实例化哪个 chat model 类。
+新增凭证类型由两类组成：一个 `CredentialBase` 子类负责描述连接配置（并发布 JSON schema 用于表单渲染），一个 `ChatModelBase` 子类实现针对该 provider API 的流式聊天协议。凭证类是入口 —— 它告诉服务该实例化哪个 chat model 类。
 
 ```python
 from agentscope.credential import CredentialBase
@@ -422,7 +489,7 @@ class MyProviderCredential(CredentialBase):
         return MyProviderChatModel
 ```
 
-把 credential 类注册到 app 上，客户端立即可用：
+把凭证类注册到 app 上，客户端立即可用：
 
 ```python
 app = create_app(
@@ -431,7 +498,7 @@ app = create_app(
 )
 ```
 
-Service 自动通过 `GET /credential/schemas` 暴露该 credential 的 JSON schema，`GET /model?provider=<name>` 路由到 `get_chat_model_class()` 返回的 chat model 类。
+服务自动通过 `GET /credential/schemas` 暴露该凭证的 JSON schema，`GET /model?provider=<name>` 路由到 `get_chat_model_class()` 返回的 chat model 类。
 
 ### Provider 模型
 
@@ -485,10 +552,10 @@ parameter_overrides:
 
 ### 存储后端
 
-`StorageBase` 抽象类定义了 agent、session、credential、message、schedule 的持久化契约。AgentScope 内置 `RedisStorage` 实现：
+`StorageBase` 抽象类定义了智能体、会话、凭证、消息、调度的持久化契约。AgentScope 内置 `RedisStorage` 实现：
 
 ```python
-from agentscope.app import RedisStorage
+from agentscope.app.storage import RedisStorage
 
 storage = RedisStorage(
     host="localhost",
@@ -514,25 +581,30 @@ class PostgresStorage(StorageBase):
         ...
 
     # 为每类记录实现 CRUD 方法：
-    # agent、session、credential、message、schedule。
+    # agent、session、credential、message、schedule、team。
     ...
 
-app = create_app(storage=PostgresStorage(dsn="postgresql://..."))
+app = create_app(
+    storage=PostgresStorage(dsn="postgresql://..."),
+    message_bus=message_bus,
+    workspace_manager=workspace_manager,
+)
 ```
 
 存储层管理的记录类型：
 
 | 记录 | 说明 |
 |------|------|
-| `AgentRecord` | Agent 配置（name、system prompt、context config、react config）。 |
-| `SessionRecord` | Session 状态，包含 `AgentState`、model 配置与 workspace 绑定。 |
-| `CredentialRecord` | 加密保存的 model provider API key。 |
+| `AgentRecord` | 智能体配置（name、system prompt、context config、react config）。 |
+| `SessionRecord` | 会话状态，包含 `AgentState`、模型配置与工作区绑定。 |
+| `CredentialRecord` | 加密保存的模型 provider API key。 |
 | `ScheduleRecord` | Cron schedule 定义及执行历史。 |
-| `Msg` | 按 session 持久化的消息，支持分页。 |
+| `TeamRecord` | 团队身份、leader 绑定与 worker 成员列表。 |
+| `Msg` | 按会话持久化的消息，支持分页。 |
 
-## Service 内部结构
+## 服务内部结构
 
-如果开发者需要在 AgentScope 中扩展或嵌入 Agent Service 的实际实现，本节描述 FastAPI 应用是如何拼装起来的 —— 启动时跑哪些逻辑、由哪些 manager 持有运行时状态、middleware 在请求路径中的位置，以及 router 如何拿到这些资源。
+如果开发者需要在 AgentScope 中扩展或嵌入智能体服务的实际实现，本节描述 FastAPI 应用是如何拼装起来的 —— 启动时跑哪些逻辑、由哪些 manager 持有运行时状态、中间件在请求路径中的位置，以及 router 如何拿到这些资源。
 
 ```mermaid
 flowchart TB
@@ -541,85 +613,101 @@ flowchart TB
     subgraph FastAPI ["FastAPI Application"]
         direction TB
 
-        subgraph Middlewares ["Middlewares"]
+        subgraph ASGI ["ASGI Middlewares"]
             PM[Protocol Middleware]
             OT[OpenTelemetry]
         end
 
         Router[API Routers]
 
-        subgraph Lifespan ["Lifespan-bound Managers"]
-            SM[SessionManager]
+        subgraph Lifespan ["Lifespan-bound Resources"]
+            Bus[MessageBus]
             BTM[BackgroundTaskManager]
             SCH[SchedulerManager]
             WM[WorkspaceManager]
+            WD[WakeupDispatcher]
+            CS[ChatService]
         end
 
-        subgraph Services ["Service Layer"]
-            CS[ChatService]
-            AS[AgentService]
+        subgraph AgentMW ["Agent-level Middlewares"]
+            IM[InboxMiddleware]
+            TOM[ToolOffloadMiddleware]
+            SCM[StateChangeMiddleware]
         end
     end
 
     Storage[(Storage)]
 
-    Client --> Middlewares --> Router
+    Client --> ASGI --> Router
     Router -- "Depends()" --> Lifespan
     Router --> CS
-    CS --> SM
-    CS --> AS
-    AS --> Agent([Agent Instance])
     CS --> Storage
-    SCH --> CS
-    BTM --> Agent
-    AS --> WM
+    CS --> AgentMW --> Agent([Agent Instance])
+    SCH -- "inbox_push + enqueue_wakeup" --> Bus
+    TOM -- "inbox_push + enqueue_wakeup" --> Bus
+    Bus --> WD
+    WD --> CS
 ```
 
 ### Lifespan
 
-Lifespan context manager 每个进程仅运行一次。启动阶段打开 storage 连接池、实例化内存中的 manager、恢复持久化的 schedule 让其在重启后继续工作。关闭阶段取消进行中的 session 与后台任务、等待 scheduler 排空、关闭 storage 池。
+Lifespan context manager 每个进程仅运行一次。基于 `AsyncExitStack` 构建，启动时按顺序进入资源 —— storage → message bus → workspace manager → background task manager → scheduler manager → chat service → wakeup dispatcher —— 关闭时按相反顺序拆除。如果任何启动步骤抛错，已进入的资源仍会被妥善清理。Scheduler 在进入时会恢复持久化的 cron 任务以保证它们跨重启生效。
 
 ### Manager
 
-四个 manager 在 lifespan 期间被绑定到 FastAPI 应用状态上，所有请求共享：
+下列资源在 lifespan 期间被绑定到 FastAPI 应用状态上，所有请求共享：
 
-| Manager | 职责 |
-|---------|------|
-| `SessionManager` | 按 session 串行化（同一 `session_id` 同时只允许一次活动 run）、SSE 缓冲重放、多订阅者扇出。 |
-| `BackgroundTaskManager` | `ToolOffloadMiddleware` 卸载到后台的工具调用注册表；执行完成后把结果回注 agent 上下文。 |
-| `SchedulerManager` | 基于 APScheduler 的 cron 执行；解析目标 session（有状态或无状态）并通过 `ChatService` 驱动运行。 |
-| `WorkspaceManager` | Workspace 生命周期与 TTL 缓存；隔离键（按 agent、按 user、按 session）由子类决定。 |
+| 资源 | 职责 |
+|------|------|
+| `MessageBus` | Redis 支撑的运行时原语（会话锁 + 回放日志、收件箱队列、唤醒信号）。是调度触发、团队消息与后台工具完成抵达空闲会话的唯一投递通道；也是支撑多进程运行的基础。 |
+| `WakeupDispatcher` | 每个进程一个。订阅唤醒信号，对每条入队的唤醒驱动 `ChatService.run` 处理目标会话。 |
+| `BackgroundTaskManager` | 纯 asyncio 任务注册表。`ToolOffloadMiddleware` 在此派生 watcher 任务；结果通过消息总线（inbox + wakeup）回送，而不是保留在该 manager 中。 |
+| `SchedulerManager` | 基于 APScheduler 的 cron 执行。触发时，trigger 会向目标会话的收件箱推一个 `HintBlock` 并入队一个唤醒 —— 不直接调用 `ChatService`。 |
+| `WorkspaceManager` | 工作区生命周期与 TTL 缓存；隔离键（按 agent、按 user、按 session）由子类决定。 |
+| `ChatService` | 运行会话的唯一入口。加载记录、组装 toolkit、构建中间件、获取消息总线会话锁，并驱动智能体的 reply 流。 |
 
-### Middleware
+### 中间件
 
-ASGI middleware 包裹每次请求。实际场景中常见两类 ——**协议 middleware**（例如 `AGUIProtocolMiddleware`）拦截 chat 端点的 SSE 响应并把每帧改写为目标协议；**可观测性 middleware**（例如 OpenTelemetry tracing）通过 `extra_middlewares` 不加修改地装入。
+两个独立的中间件层在不同作用域上运作。
+
+**ASGI 中间件**包裹每次 HTTP 请求。实际场景中常见两类：**协议中间件**（例如 `AGUIProtocolMiddleware`），拦截会话流端点的 SSE 响应并把每帧改写为目标协议；**可观测性中间件**（例如 OpenTelemetry tracing）。两者都通过 `extra_middlewares` 安装。
+
+**智能体层中间件**包裹 `ChatService` 内对智能体的每次调用，暴露在 `agentscope.app.middleware` 下；框架始终安装三个：
+
+- `InboxMiddleware` —— hint 注入的唯一所有者。每次推理步骤前会清空会话收件箱，并把队列中的 `HintBlock` 以 `HintBlockEvent` 形式 yield 出来，让调度触发、团队消息与卸载工具结果都通过同一路径流入智能体上下文。
+- `ToolOffloadMiddleware` —— 工具调用超时后会被转入后台 watcher 任务，并向智能体 yield 一个合成占位结果。当 watcher 完成时，结果连同唤醒被推回会话收件箱，下一次运行时被取走。
+- `StateChangeMiddleware` —— 在智能体状态发生变化时（例如 `tasks_context`、`permission_context`）发出 `CustomEvent`，让前端无需读取原始状态快照即可作出反应。
+
+要添加自己的中间件（审计日志、租户隔离、自定义鉴权……），向 `create_app` 传入 `extra_agent_middlewares` 工厂。该工厂在每次组装智能体时被调用一次，其返回的中间件会追加到框架自带的之后。
 
 ### 依赖
 
-Router 通过 FastAPI 的 `Depends()` 拿到应用状态。标准注入项如下：
+Router 通过 FastAPI 的 `Depends()` 拿到应用状态。标准注入项（位于 `agentscope.app.deps`）如下：
 
 | 依赖 | 返回 |
 |------|------|
 | `get_current_user_id` | 调用者的 user id —— 可被覆盖以对接任意鉴权系统。 |
 | `get_storage` | 绑定在 app 上的 `StorageBase` 实例。 |
-| `get_session_manager` | 由 lifespan 绑定的 `SessionManager`。 |
+| `get_message_bus` | 绑定在 app 上的 `MessageBus` 实例。 |
 | `get_workspace_manager` | 由 lifespan 绑定的 `WorkspaceManager`。 |
 | `get_background_task_manager` | 由 lifespan 绑定的 `BackgroundTaskManager`。 |
 | `get_scheduler_manager` | 由 lifespan 绑定的 `SchedulerManager`。 |
+| `get_chat_service` | 由 lifespan 绑定的 `ChatService`。 |
 
 ## 延伸阅读
 
 <CardGroup cols={2}>
   <Card title="Agent" icon="robot" href="/zh/v2/building-blocks/agent">
-    Agent 抽象与 ReAct 循环
+    核心智能体抽象与 ReAct 循环
   </Card>
   <Card title="Message & Event" icon="envelope" href="/zh/v2/building-blocks/message-and-event">
     事件流与消息重建
   </Card>
   <Card title="Tool" icon="wrench" href="/zh/v2/building-blocks/tool">
-    内置与自定义 tool，包括外部执行
+    内置与自定义工具，包括外部执行
   </Card>
   <Card title="Context" icon="database" href="/zh/v2/building-blocks/context">
-    上下文压缩与 workspace offloading
+    上下文压缩与工作区 offloading
   </Card>
 </CardGroup>
+
