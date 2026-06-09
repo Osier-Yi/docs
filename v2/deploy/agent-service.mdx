@@ -199,6 +199,9 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 <ParamField path="extra_agent_tools" type="AgentToolFactory | None" default="None">
   Async factory `(user_id, agent_id, session_id) -> Awaitable[list[ToolBase]]` invoked once per agent assembly. Returned tools are merged into the toolkit's `"basic"` group alongside the workspace-derived tools, so tool availability can vary per caller (per-tenant integrations, user-specific credentials).
 </ParamField>
+<ParamField path="sub_agent_templates" type="list[SubAgentTemplate] | None" default="None">
+  Reusable blueprints for sub-agent creation within teams. Each template defines a sub-agent *type* (e.g. `"researcher"`, `"coder"`) with pre-configured system prompt, permission context, and task context. When registered, the `AgentCreate` tool exposes a `subagent_type` parameter so the leader agent can route to the appropriate template. See [Custom sub-agent types](/v2/deploy/agent-team#custom-sub-agent-types) for details.
+</ParamField>
 <ParamField path="title" type="str" default="AgentScope">
   OpenAPI title shown in the docs UI.
 </ParamField>

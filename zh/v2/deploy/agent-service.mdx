@@ -198,6 +198,9 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 <ParamField path="extra_agent_tools" type="AgentToolFactory | None" default="None">
   异步工厂 `(user_id, agent_id, session_id) -> Awaitable[list[ToolBase]]`，在每次组装智能体时被调用一次。返回的工具会与工作区派生的工具一起合并到 toolkit 的 `"basic"` 分组里，便于按调用者动态决定可用工具（例如按租户接入、按用户使用各自凭证的工具）。
 </ParamField>
+<ParamField path="sub_agent_templates" type="list[SubAgentTemplate] | None" default="None">
+  团队中子智能体创建的可复用蓝图。每个模板定义了一个子智能体*类型*（例如 `"researcher"`、`"coder"`），预设了系统提示词、权限上下文与任务上下文。注册后，`AgentCreate` 工具会暴露 `subagent_type` 参数，使 leader 智能体可以路由到相应的模板。详见[自定义子智能体类型](/zh/v2/deploy/agent-team#自定义子智能体类型)。
+</ParamField>
 <ParamField path="title" type="str" default="AgentScope">
   OpenAPI 文档界面中显示的标题。
 </ParamField>
