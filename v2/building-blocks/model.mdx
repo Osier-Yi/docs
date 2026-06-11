@@ -15,7 +15,10 @@ The model layer is organized as a two-tier hierarchy: a **Credential** at the to
       <Tree.File name="DashScopeChatModel" />
       <Tree.File name="..." />
     </Tree.Folder>
-    <Tree.Folder name="TTSModelBase (coming soon)" />
+    <Tree.Folder name="TTSModelBase" defaultOpen>
+      <Tree.File name="DashScopeTTSModel" />
+      <Tree.File name="DashScopeRealtimeTTSModel" />
+    </Tree.Folder>
     <Tree.Folder name="EmbeddingModelBase (coming soon)" />
     <Tree.Folder name="RealtimeModelBase (coming soon)" />
   </Tree.Folder>
@@ -424,9 +427,279 @@ This design allows the frontend to discover available models, their capabilities
 
 ## TTS
 
-<Tip>
-Coming soon — we are migrating TTS support from v1.0 to v2.0.
-</Tip>
+A **TTS Model** converts text into synthesized speech audio, supporting both standard and realtime (streaming-input) synthesis modes. AgentScope currently ships the following TTS model classes:
+
+| Provider | Model Class | Highlights |
+|----------|-------------|------------|
+| DashScope | `DashScopeTTSModel` | Qwen3-TTS, multiple voices, streaming output |
+| DashScope (Realtime) | `DashScopeRealtimeTTSModel` | WebSocket streaming input, ideal for LLM output piping |
+
+### Create TTS Model
+
+Every TTS model takes a credential, a model name, and an optional provider-specific `Parameters` object. The two tabs below show the standard and realtime setups:
+
+<CodeGroup>
+```python Non-Realtime (Standard)
+import os
+from agentscope.tts import DashScopeTTSModel
+from agentscope.credential import DashScopeCredential
+
+tts = DashScopeTTSModel(
+    credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+    model="qwen3-tts-flash",
+    parameters=DashScopeTTSModel.Parameters(voice="Cherry"),
+    stream=True,
+)
+```
+
+```python Realtime (Streaming Input)
+import os
+from agentscope.tts import DashScopeRealtimeTTSModel
+from agentscope.credential import DashScopeCredential
+
+tts = DashScopeRealtimeTTSModel(
+    credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+    model="qwen3-tts-flash-realtime",
+    parameters=DashScopeRealtimeTTSModel.Parameters(voice="Serena"),
+    stream=True,
+)
+```
+</CodeGroup>
+
+Common constructor arguments shared by every TTS model:
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `credential` | `CredentialBase` | Provider-specific credential |
+| `model` | `str` | Model identifier (e.g. `"qwen3-tts-flash"`) |
+| `parameters` | `Parameters \| None` | Provider-specific parameters such as `voice` |
+| `stream` | `bool` | Whether to stream audio output |
+
+Additional arguments for `DashScopeRealtimeTTSModel`:
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `cold_start_length` | `int \| None` | `None` | Minimum character count before first text chunk is sent to the API |
+| `cold_start_words` | `int \| None` | `None` | Minimum word count before first text chunk is sent |
+| `max_retries` | `int` | `3` | Maximum retry attempts on WebSocket failure |
+| `retry_delay` | `float` | `5.0` | Initial retry delay in seconds (exponential backoff) |
+
+### Call TTS Model
+
+Invoke the model by calling `synthesize()` with the text to speak:
+
+```python
+async def synthesize(
+    self,
+    text: str | None = None,
+    **kwargs: Any,
+) -> TTSResponse | AsyncGenerator[TTSResponse, None]:
+```
+
+The return type follows the model's `stream` setting:
+
+- **`stream=False`** — returns a single `TTSResponse` with the complete audio.
+- **`stream=True`** — returns an `AsyncGenerator[TTSResponse, None]`. Each chunk carries an incremental audio delta; the final chunk has `is_last=True`.
+
+Each `TTSResponse` carries:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | `DataBlock \| None` | Audio data. Format indicated by `content.source.media_type` (e.g. `"audio/wav"`, `"audio/pcm;rate=24000"`) |
+| `is_last` | `bool` | `True` on the final streaming chunk |
+| `usage` | `TTSUsage \| None` | Token counts (`input_tokens`, `output_tokens`) and elapsed `time` in seconds |
+| `id` | `str` | Auto-generated unique identifier |
+| `metadata` | `dict \| None` | Optional provider-specific metadata |
+
+```python
+import asyncio
+import os
+from agentscope.tts import DashScopeTTSModel
+from agentscope.credential import DashScopeCredential
+
+async def main():
+    tts = DashScopeTTSModel(
+        credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+        model="qwen3-tts-flash",
+        parameters=DashScopeTTSModel.Parameters(voice="Cherry"),
+        stream=True,
+    )
+
+    # Streaming synthesis
+    async for chunk in await tts.synthesize("Hello, world!"):
+        if chunk.content:
+            # chunk.content is a DataBlock with base64-encoded audio/wav
+            print(f"Audio chunk: {len(chunk.content.source.data)} bytes")
+
+asyncio.run(main())
+```
+
+### Realtime TTS (Streaming Input)
+
+For realtime models, text can be pushed incrementally as it arrives from a streaming LLM. The lifecycle is managed via `async with` or manual `connect()` / `close()`:
+
+```python
+import asyncio
+import os
+from agentscope.tts import DashScopeRealtimeTTSModel
+from agentscope.credential import DashScopeCredential
+
+async def main():
+    tts = DashScopeRealtimeTTSModel(
+        credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+        model="qwen3-tts-flash-realtime",
+        parameters=DashScopeRealtimeTTSModel.Parameters(voice="Cherry"),
+        stream=True,
+    )
+
+    async with tts:
+        # Push text incrementally as it arrives from a streaming LLM.
+        # Each push() returns a TTSResponse with audio accumulated so far
+        # (or content=None if not yet available).
+        resp1 = await tts.push("Hello, ")
+        if resp1.content:
+            print("Audio available after first push")
+
+        resp2 = await tts.push("how are you today?")
+        if resp2.content:
+            print("Audio available after second push")
+
+        # Finalize: flush remaining buffered text and collect final audio.
+        # text= is optional — pass extra text to append before finalizing,
+        # or omit to finalize previously pushed text only.
+        response = await tts.synthesize()
+
+asyncio.run(main())
+```
+
+| Method | Description |
+|--------|-------------|
+| `connect()` | Open WebSocket connection |
+| `push(text)` | Append text incrementally (non-blocking), returns audio accumulated so far |
+| `synthesize()` | Finalize and return remaining audio |
+| `close()` | Tear down connection |
+
+### Use with Agent (TTSMiddleware)
+
+In the agent layer, TTS is integrated via `TTSMiddleware` — it intercepts the agent's text output and synthesizes speech automatically:
+
+```python
+from agentscope.agent import Agent
+from agentscope.middleware import TTSMiddleware
+from agentscope.tts import DashScopeTTSModel
+from agentscope.credential import DashScopeCredential
+
+agent = Agent(
+    name="assistant",
+    model=chat_model,
+    middlewares=[
+        TTSMiddleware(
+            DashScopeTTSModel(
+                credential=DashScopeCredential(api_key="..."),
+                model="qwen3-tts-flash",
+                parameters=DashScopeTTSModel.Parameters(voice="Cherry"),
+                stream=True,
+            ),
+        ),
+    ],
+)
+
+# The agent's reply stream now includes audio events
+async for event in agent.reply_stream(user_msg):
+    # TextBlockDeltaEvent — text content
+    # DataBlockDeltaEvent — audio content (WAV)
+    ...
+```
+
+The middleware automatically selects the optimal synthesis strategy:
+
+| TTS Mode | Middleware Behavior |
+|----------|---------------------|
+| Non-realtime | Waits for full text, then synthesizes all at once |
+| Realtime | Pushes text deltas as they arrive, streams audio back concurrently |
+
+### TTS Model Card
+
+`TTSModelCard` describes a TTS model's capabilities — available voices, streaming support, and parameter ranges — and is used to drive the frontend model picker. Each card is defined by a YAML file alongside the model implementation:
+
+```yaml
+name: qwen3-tts-flash
+label: Qwen3-TTS-Flash
+status: active
+input_types:
+  - text/plain
+output_types:
+  - audio/wav
+voices:
+  - Cherry
+  - Serena
+  - Ethan
+  - Chelsie
+parameter_overrides: {}
+```
+
+The `voices` list is automatically injected into the `parameter_schema` as an enum constraint on the `voice` field, so the frontend renders a dropdown selector.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` | Model identifier (e.g. `"qwen3-tts-flash"`) |
+| `label` | `str` | Display name (e.g. `"Qwen3-TTS-Flash"`) |
+| `status` | `str` | `"active"`, `"deprecated"`, or `"sunset"` |
+| `realtime` | `bool` | Whether model supports streaming input |
+| `input_types` | `list[str]` | Accepted input MIME types (always `["text/plain"]`) |
+| `output_types` | `list[str]` | Output MIME types (typically `["audio/wav"]`) |
+| `parameter_schema` | `dict` | Merged JSON Schema for the parameter form — base schema from `Parameters` class, enriched with `voices` enum from YAML |
+| `parameters_overrides` | `dict` | Per-model overrides (same syntax as chat model cards) |
+
+Retrieve TTS model cards via the credential:
+
+```python
+from agentscope.credential import DashScopeCredential
+
+cards = DashScopeCredential.list_tts_models()
+for card in cards:
+    print(f"{card.name} (realtime={card.realtime}): {card.label}")
+```
+
+Or directly on the model class:
+
+```python
+from agentscope.tts import DashScopeTTSModel
+
+cards = DashScopeTTSModel.list_models()
+```
+
+### Custom TTS Provider
+
+To add a new TTS provider, implement a `TTSModelBase` subclass and register it on the credential:
+
+```python
+from typing import Literal, Type, TYPE_CHECKING, AsyncGenerator, Any
+from pydantic import BaseModel, Field
+from agentscope.tts import TTSModelBase, TTSResponse
+from agentscope.credential import CredentialBase
+
+if TYPE_CHECKING:
+    from agentscope.tts import TTSModelBase as TTSBase
+
+class MyTTSModel(TTSModelBase):
+    class Parameters(BaseModel):
+        voice: str = Field(default="default", title="Voice")
+
+    type: Literal["my_tts"] = "my_tts"
+
+    async def synthesize(
+        self, text: str | None = None, **kwargs: Any
+    ) -> TTSResponse | AsyncGenerator[TTSResponse, None]:
+        # Call your provider's API here
+        ...
+
+# Register on your credential
+class MyCredential(CredentialBase):
+    @classmethod
+    def get_tts_model_classes(cls) -> list[Type["TTSBase"]]:
+        return [MyTTSModel]
+```
 
 ## Embedding
 
