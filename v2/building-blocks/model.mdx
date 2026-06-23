@@ -18,6 +18,7 @@ The model layer is organized as a two-tier hierarchy: a **Credential** at the to
     <Tree.Folder name="TTSModelBase" defaultOpen>
       <Tree.File name="DashScopeTTSModel" />
       <Tree.File name="DashScopeRealtimeTTSModel" />
+      <Tree.File name="DashScopeCosyVoiceRealtimeTTSModel" />
     </Tree.Folder>
     <Tree.Folder name="EmbeddingModelBase (coming soon)" />
     <Tree.Folder name="RealtimeModelBase (coming soon)" />
@@ -432,7 +433,8 @@ A **TTS Model** converts text into synthesized speech audio, supporting both sta
 | Provider | Model Class | Highlights |
 |----------|-------------|------------|
 | DashScope | `DashScopeTTSModel` | Qwen3-TTS, multiple voices, streaming output |
-| DashScope (Realtime) | `DashScopeRealtimeTTSModel` | WebSocket streaming input, ideal for LLM output piping |
+| DashScope (Realtime) | `DashScopeRealtimeTTSModel` | Qwen3-TTS WebSocket streaming input, ideal for LLM output piping |
+| DashScope (CosyVoice Realtime) | `DashScopeCosyVoiceRealtimeTTSModel` | CosyVoice-v3 streaming input, supports cosyvoice-v3-plus/flash/sambert |
 
 ### Create TTS Model
 
@@ -452,7 +454,7 @@ tts = DashScopeTTSModel(
 )
 ```
 
-```python Realtime (Streaming Input)
+```python Realtime (Qwen3 Streaming Input)
 import os
 from agentscope.tts import DashScopeRealtimeTTSModel
 from agentscope.credential import DashScopeCredential
@@ -461,6 +463,19 @@ tts = DashScopeRealtimeTTSModel(
     credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
     model="qwen3-tts-flash-realtime",
     parameters=DashScopeRealtimeTTSModel.Parameters(voice="Serena"),
+    stream=True,
+)
+```
+
+```python Realtime (CosyVoice Streaming Input)
+import os
+from agentscope.tts import DashScopeCosyVoiceRealtimeTTSModel
+from agentscope.credential import DashScopeCredential
+
+tts = DashScopeCosyVoiceRealtimeTTSModel(
+    credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+    model="cosyvoice-v3-plus",
+    parameters=DashScopeCosyVoiceRealtimeTTSModel.Parameters(voice="longanyang"),
     stream=True,
 )
 ```
@@ -475,7 +490,7 @@ Common constructor arguments shared by every TTS model:
 | `parameters` | `Parameters \| None` | Provider-specific parameters such as `voice` |
 | `stream` | `bool` | Whether to stream audio output |
 
-Additional arguments for `DashScopeRealtimeTTSModel`:
+Additional arguments for `DashScopeRealtimeTTSModel` and `DashScopeCosyVoiceRealtimeTTSModel`:
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -536,7 +551,11 @@ asyncio.run(main())
 
 ### Realtime TTS (Streaming Input)
 
-For realtime models, text can be pushed incrementally as it arrives from a streaming LLM. The lifecycle is managed via `async with` or manual `connect()` / `close()`:
+For realtime models (`DashScopeRealtimeTTSModel` and `DashScopeCosyVoiceRealtimeTTSModel`), text can be pushed incrementally as it arrives from a streaming LLM. Both share the same `push()` / `synthesize()` interface. The lifecycle is managed via `async with` or manual `connect()` / `close()`:
+
+<Note>
+`DashScopeRealtimeTTSModel` (Qwen3) produces audio at token-level granularity — each `push()` call typically returns audio data. In contrast, `DashScopeCosyVoiceRealtimeTTSModel` relies on the CosyVoice server which automatically segments text into sentences before synthesizing. Audio is only returned after a complete sentence boundary is detected, so `push()` may return empty responses for partial sentences. Calling `synthesize()` forces synthesis of all remaining text including incomplete sentences.
+</Note>
 
 ```python
 import asyncio
@@ -622,7 +641,7 @@ The middleware automatically selects the optimal synthesis strategy:
 
 `TTSModelCard` describes a TTS model's capabilities — available voices, streaming support, and parameter ranges — and is used to drive the frontend model picker. Each card is defined by a YAML file alongside the model implementation:
 
-```yaml
+```yaml Qwen3 TTS
 name: qwen3-tts-flash
 label: Qwen3-TTS-Flash
 status: active
@@ -635,6 +654,22 @@ voices:
   - Serena
   - Ethan
   - Chelsie
+parameter_overrides: {}
+```
+
+```yaml CosyVoice Realtime
+name: cosyvoice-v3-plus
+label: CosyVoice-v3-Plus
+status: active
+realtime: true
+input_types:
+  - text/plain
+output_types:
+  - audio/wav
+voices:
+  - longanyang
+  - longxiaochun
+  - longshuo
 parameter_overrides: {}
 ```
 
@@ -664,9 +699,13 @@ for card in cards:
 Or directly on the model class:
 
 ```python
-from agentscope.tts import DashScopeTTSModel
+from agentscope.tts import DashScopeTTSModel, DashScopeCosyVoiceRealtimeTTSModel
 
+# Qwen3 TTS models
 cards = DashScopeTTSModel.list_models()
+
+# CosyVoice Realtime models
+cosyvoice_cards = DashScopeCosyVoiceRealtimeTTSModel.list_models()
 ```
 
 ### Custom TTS Provider

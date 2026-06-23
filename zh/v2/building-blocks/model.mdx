@@ -18,6 +18,7 @@ description: "在 AgentScope 中配置并连接 LLM 模型提供商"
     <Tree.Folder name="TTSModelBase" defaultOpen>
       <Tree.File name="DashScopeTTSModel" />
       <Tree.File name="DashScopeRealtimeTTSModel" />
+      <Tree.File name="DashScopeCosyVoiceRealtimeTTSModel" />
     </Tree.Folder>
     <Tree.Folder name="EmbeddingModelBase (coming soon)" />
     <Tree.Folder name="RealtimeModelBase (coming soon)" />
@@ -432,7 +433,8 @@ cards = model_cls.list_models()                          # -> list[ModelCard]
 | 提供商 | 模型类 | 说明 |
 |--------|--------|------|
 | DashScope | `DashScopeTTSModel` | Qwen3-TTS，多种音色，流式输出 |
-| DashScope (Realtime) | `DashScopeRealtimeTTSModel` | WebSocket 流式输入，适合对接 LLM 流式输出 |
+| DashScope (Realtime) | `DashScopeRealtimeTTSModel` | Qwen3-TTS WebSocket 流式输入，适合对接 LLM 流式输出 |
+| DashScope (CosyVoice Realtime) | `DashScopeCosyVoiceRealtimeTTSModel` | CosyVoice-v3 流式输入，支持 cosyvoice-v3-plus/flash/sambert |
 
 ### 创建 TTS Model
 
@@ -452,7 +454,7 @@ tts = DashScopeTTSModel(
 )
 ```
 
-```python 实时模式（流式输入）
+```python 实时模式（Qwen3 流式输入）
 import os
 from agentscope.tts import DashScopeRealtimeTTSModel
 from agentscope.credential import DashScopeCredential
@@ -461,6 +463,19 @@ tts = DashScopeRealtimeTTSModel(
     credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
     model="qwen3-tts-flash-realtime",
     parameters=DashScopeRealtimeTTSModel.Parameters(voice="Serena"),
+    stream=True,
+)
+```
+
+```python 实时模式（CosyVoice 流式输入）
+import os
+from agentscope.tts import DashScopeCosyVoiceRealtimeTTSModel
+from agentscope.credential import DashScopeCredential
+
+tts = DashScopeCosyVoiceRealtimeTTSModel(
+    credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+    model="cosyvoice-v3-plus",
+    parameters=DashScopeCosyVoiceRealtimeTTSModel.Parameters(voice="longanyang"),
     stream=True,
 )
 ```
@@ -475,7 +490,7 @@ tts = DashScopeRealtimeTTSModel(
 | `parameters` | `Parameters \| None` | 提供商专属参数，如 `voice` |
 | `stream` | `bool` | 是否流式输出音频 |
 
-`DashScopeRealtimeTTSModel` 额外参数：
+`DashScopeRealtimeTTSModel` 和 `DashScopeCosyVoiceRealtimeTTSModel` 额外参数：
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -535,7 +550,11 @@ asyncio.run(main())
 
 ### 实时 TTS（流式输入）
 
-实时模型支持增量推送文本（典型场景：对接 LLM 的流式输出）。通过 `async with` 或手动调用 `connect()` / `close()` 管理生命周期：
+实时模型（`DashScopeRealtimeTTSModel` 和 `DashScopeCosyVoiceRealtimeTTSModel`）支持增量推送文本（典型场景：对接 LLM 的流式输出）。两者共享相同的 `push()` / `synthesize()` 接口。通过 `async with` 或手动调用 `connect()` / `close()` 管理生命周期：
+
+<Note>
+`DashScopeRealtimeTTSModel`（Qwen3）以 token 级别粒度产出音频——每次 `push()` 通常都能返回音频数据。而 `DashScopeCosyVoiceRealtimeTTSModel` 依赖 CosyVoice 服务端自动分句后才进行合成，音频只在检测到完整句子边界后才返回，因此 `push()` 对不完整的句子可能返回空响应。调用 `synthesize()` 会强制合成所有剩余文本（包括未完成的句子）。
+</Note>
 
 ```python
 import asyncio
@@ -618,7 +637,7 @@ async for event in agent.reply_stream(user_msg):
 
 `TTSModelCard` 描述 TTS 模型的能力（可用音色、流式支持、参数范围），用于驱动前端模型选择器。每个 card 由模型实现旁的 YAML 文件定义：
 
-```yaml
+```yaml Qwen3 TTS
 name: qwen3-tts-flash
 label: Qwen3-TTS-Flash
 status: active
@@ -631,6 +650,22 @@ voices:
   - Serena
   - Ethan
   - Chelsie
+parameter_overrides: {}
+```
+
+```yaml CosyVoice Realtime
+name: cosyvoice-v3-plus
+label: CosyVoice-v3-Plus
+status: active
+realtime: true
+input_types:
+  - text/plain
+output_types:
+  - audio/wav
+voices:
+  - longanyang
+  - longxiaochun
+  - longshuo
 parameter_overrides: {}
 ```
 
@@ -660,9 +695,13 @@ for card in cards:
 或直接通过模型类：
 
 ```python
-from agentscope.tts import DashScopeTTSModel
+from agentscope.tts import DashScopeTTSModel, DashScopeCosyVoiceRealtimeTTSModel
 
+# Qwen3 TTS 模型
 cards = DashScopeTTSModel.list_models()
+
+# CosyVoice Realtime 模型
+cosyvoice_cards = DashScopeCosyVoiceRealtimeTTSModel.list_models()
 ```
 
 ### 自定义 TTS Provider
