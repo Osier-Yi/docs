@@ -593,9 +593,9 @@ asyncio.run(main())
 | `synthesize()` | Finalize and return remaining audio |
 | `close()` | Tear down connection |
 
-### Use with Agent (TTSMiddleware)
+### Integrate with Agent
 
-In the agent layer, TTS is integrated via `TTSMiddleware` — it intercepts the agent's text output and synthesizes speech automatically:
+In the agent layer, TTS is integrated via [`TTSMiddleware`](/versions/2.0.2/en/building-blocks/middleware#ttsmiddleware) — it intercepts the agent's text output and synthesizes speech automatically:
 
 ```python
 from agentscope.agent import Agent

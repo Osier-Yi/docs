@@ -153,7 +153,7 @@ with tracer.start_as_current_span(
 
 ### TTSMiddleware
 
-`TTSMiddleware` 拦截 agent 的文本输出并合成语音，将 `DATA_BLOCK_*` 音频事件注入到事件流中。它 hook 在 `on_reply` 位置，观察每个 `TextBlockDeltaEvent` 和 `TextBlockEndEvent`。
+`TTSMiddleware` 拦截 agent 的文本输出并合成语音，将 `DataBlockStartEvent` / `DataBlockDeltaEvent` / `DataBlockEndEvent` 音频事件注入到事件流中。它在 `on_reply` 阶段拦截，观察每个 `TextBlockDeltaEvent` 和 `TextBlockEndEvent`。
 
 ```python
 from agentscope.agent import Agent

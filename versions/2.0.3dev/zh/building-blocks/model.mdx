@@ -599,9 +599,9 @@ asyncio.run(main())
 | `synthesize()` | 结束当前 utterance，返回剩余音频 |
 | `close()` | 断开连接 |
 
-### 与 Agent 集成（TTSMiddleware）
+### 与 Agent 集成
 
-在 agent 层，TTS 通过 `TTSMiddleware` 集成 —— 自动拦截 agent 的文本输出并合成语音：
+在 agent 层，TTS 通过 [`TTSMiddleware`](/versions/2.0.3dev/zh/building-blocks/middleware#ttsmiddleware) 集成 —— 自动拦截 agent 的文本输出并合成语音：
 
 ```python
 from agentscope.agent import Agent

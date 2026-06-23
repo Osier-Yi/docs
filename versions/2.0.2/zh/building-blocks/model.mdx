@@ -480,7 +480,7 @@ tts = DashScopeRealtimeTTSModel(
 | `parameters` | `Parameters \| None` | 提供商专属参数，如 `voice` |
 | `stream` | `bool` | 是否流式输出音频 |
 
-`DashScopeRealtimeTTSModel`额外参数：
+`DashScopeRealtimeTTSModel` 额外参数：
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -584,9 +584,9 @@ asyncio.run(main())
 | `synthesize()` | 结束当前 utterance，返回剩余音频 |
 | `close()` | 断开连接 |
 
-### 与 Agent 集成（TTSMiddleware）
+### 与 Agent 集成
 
-在 agent 层，TTS 通过 `TTSMiddleware` 集成 —— 自动拦截 agent 的文本输出并合成语音：
+在 agent 层，TTS 通过 [`TTSMiddleware`](/versions/2.0.2/zh/building-blocks/middleware#ttsmiddleware) 集成 —— 自动拦截 agent 的文本输出并合成语音：
 
 ```python
 from agentscope.agent import Agent

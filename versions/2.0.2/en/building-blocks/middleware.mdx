@@ -153,7 +153,7 @@ These custom spans are emitted alongside AgentScope's built-in spans and deliver
 
 ### TTSMiddleware
 
-`TTSMiddleware` intercepts the agent's text output and synthesizes speech audio, injecting `DATA_BLOCK_*` events into the event stream alongside the text. It hooks into `on_reply` to observe every `TextBlockDeltaEvent` and `TextBlockEndEvent`.
+`TTSMiddleware` intercepts the agent's text output and synthesizes speech audio, injecting `DataBlockStartEvent` / `DataBlockDeltaEvent` / `DataBlockEndEvent` into the event stream alongside the text. It hooks into `on_reply` to observe every `TextBlockDeltaEvent` and `TextBlockEndEvent`.
 
 ```python
 from agentscope.agent import Agent
