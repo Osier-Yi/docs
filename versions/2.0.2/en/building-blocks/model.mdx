@@ -23,7 +23,6 @@ The model layer is organized as a two-tier hierarchy: a **Credential** at the to
     <Tree.Folder name="TTSModelBase" defaultOpen>
       <Tree.File name="DashScopeTTSModel" />
       <Tree.File name="DashScopeRealtimeTTSModel" />
-      <Tree.File name="DashScopeCosyVoiceRealtimeTTSModel" />
     </Tree.Folder>
     <Tree.Folder name="EmbeddingModelBase" defaultOpen>
       <Tree.File name="DashScopeEmbeddingModel" />
@@ -486,7 +485,7 @@ Common constructor arguments shared by every TTS model:
 | `parameters` | `Parameters \| None` | Provider-specific parameters such as `voice` |
 | `stream` | `bool` | Whether to stream audio output |
 
-Additional arguments for `DashScopeRealtimeTTSModel` and `DashScopeCosyVoiceRealtimeTTSModel`:
+Additional arguments for `DashScopeRealtimeTTSModel`:
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -547,10 +546,10 @@ asyncio.run(main())
 
 ### Realtime TTS (Streaming Input)
 
-For realtime models (`DashScopeRealtimeTTSModel` and `DashScopeCosyVoiceRealtimeTTSModel`), text can be pushed incrementally as it arrives from a streaming LLM. Both share the same `push()` / `synthesize()` interface. The lifecycle is managed via `async with` or manual `connect()` / `close()`:
+For realtime models (`DashScopeRealtimeTTSModel`), text can be pushed incrementally as it arrives from a streaming LLM. Both share the same `push()` / `synthesize()` interface. The lifecycle is managed via `async with` or manual `connect()` / `close()`:
 
 <Note>
-`DashScopeRealtimeTTSModel` (Qwen3) produces audio at token-level granularity — each `push()` call typically returns audio data. In contrast, `DashScopeCosyVoiceRealtimeTTSModel` relies on the CosyVoice server which automatically segments text into sentences before synthesizing. Audio is only returned after a complete sentence boundary is detected, so `push()` may return empty responses for partial sentences. Calling `synthesize()` forces synthesis of all remaining text including incomplete sentences.
+`DashScopeRealtimeTTSModel` (Qwen3) produces audio at token-level granularity — each `push()` call typically returns audio data.
 </Note>
 
 ```python
