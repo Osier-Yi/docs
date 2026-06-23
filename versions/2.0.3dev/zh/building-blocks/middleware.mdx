@@ -151,6 +151,10 @@ with tracer.start_as_current_span(
 
 这些自定义 span 会与 AgentScope 内置的 span 一并上报，发送到 `TracerProvider` 中配置的同一个 OTLP collector。
 
+### 长期记忆
+
+AgentScope 以中间件的形式实现长期记忆，让 agent 能够在多个会话间持久保存并调取信息。记忆后端挂接 `on_reply`（reply 前检索 + reply 后写回）、`on_system_prompt`（声明记忆工具），并通过 `list_tools` 提供供 agent 调用的 memory 相关工具（例如 `search_memory` / `add_memory`）。当前可用的后端为 `Mem0Middleware`，由 [mem0](https://github.com/mem0ai/mem0) 驱动。安装方式、控制模式与构造方式详见[长期记忆](/versions/2.0.3dev/zh/building-blocks/long-term-memory)。
+
 ## 自定义 Middleware
 
 继承 `MiddlewareBase`，只实现需要的 hook 即可，其它的不用管。
