@@ -217,6 +217,73 @@ The middleware is **stateless on the instance itself** — all runtime state liv
 The budget is scoped **per reply**, not per agent lifetime. Each new reply starts with a fresh counter, so the limit applies independently to every call to `agent(...)`.
 </Note>
 
+### TTSMiddleware
+
+`TTSMiddleware` intercepts the agent's text output and synthesizes speech audio, injecting `DataBlockStartEvent` / `DataBlockDeltaEvent` / `DataBlockEndEvent` into the event stream alongside the text. It hooks into `on_reply` to observe every `TextBlockDeltaEvent` and `TextBlockEndEvent`.
+
+```python
+from agentscope.agent import Agent
+from agentscope.middleware import TTSMiddleware
+from agentscope.tts import DashScopeTTSModel
+from agentscope.credential import DashScopeCredential
+
+agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=model,
+    toolkit=toolkit,
+    middlewares=[
+        TTSMiddleware(
+            DashScopeTTSModel(
+                credential=DashScopeCredential(api_key="..."),
+                model="qwen3-tts-flash",
+                parameters=DashScopeTTSModel.Parameters(voice="Cherry"),
+                stream=True,
+            ),
+        ),
+    ],
+)
+```
+
+The middleware automatically adapts to the TTS model's mode:
+
+| TTS Mode | Behavior |
+|----------|----------|
+| Non-realtime (`realtime=False`) | Accumulates text until `TextBlockEndEvent`, then calls `synthesize(text)` and emits the full audio as one data block |
+| Realtime (`realtime=True`) | Pushes each `TextBlockDeltaEvent.delta` via `push()`, emitting audio chunks as they arrive; calls `synthesize()` on `TextBlockEndEvent` to flush remaining audio |
+
+The output event stream differs by mode:
+
+**Non-realtime** — audio follows after the text block completes:
+
+```
+TextBlockStartEvent
+TextBlockDeltaEvent (text)
+TextBlockDeltaEvent (text)
+TextBlockEndEvent
+DataBlockStartEvent           ← audio synthesized after text ends
+DataBlockDeltaEvent (audio)
+DataBlockDeltaEvent (audio)
+DataBlockEndEvent
+```
+
+**Realtime** — audio chunks arrive interleaved with text as synthesis runs concurrently:
+
+```
+TextBlockStartEvent
+TextBlockDeltaEvent (text)
+DataBlockStartEvent           ← audio begins during text stream
+DataBlockDeltaEvent (audio)
+TextBlockDeltaEvent (text)
+DataBlockDeltaEvent (audio)
+TextBlockEndEvent
+DataBlockDeltaEvent (audio)   ← remaining audio from synthesize()
+DataBlockEndEvent
+```
+
+Each `DataBlockDeltaEvent.data` carries an incremental base64-encoded audio chunk; the full audio is the concatenation of every delta's decoded bytes, keyed by `block_id`.
+
+
 ## Custom Middleware
 
 Subclass `MiddlewareBase` and implement only the hooks you need — leave the rest alone.
