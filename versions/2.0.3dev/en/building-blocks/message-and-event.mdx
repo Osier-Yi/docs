@@ -117,7 +117,7 @@ These content blocks carry different data information, and their detailed fields
     | `id` | `str` | Unique identifier for this tool call. |
     | `name` | `str` | Name of the tool to be called. |
     | `input` | `str` | Tool call parameters in JSON string format. |
-    | `state` | `ToolCallState` | Tool call state:<br/>• `"pending"`: Pending, has not passed verification and permission checks.<br/>• `"asking"`: Suspended, waiting for user authorization.<br/>• `"allowed"`: Approved by the user or permission rules, waiting to execute.<br/>• `"submitted"`: Submitted externally and waiting for execution results.<br/>• `"finished"`: Execution compiled (whether successful or failed). |
+    | `state` | `ToolCallState` | Tool call state:<br/>• `"pending"`: Pending, has not passed verification and permission checks.<br/>• `"asking"`: Suspended, waiting for user authorization.<br/>• `"allowed"`: Approved by the user or permission rules, waiting to execute.<br/>• `"submitted"`: Submitted externally and waiting for execution results.<br/>• `"finished"`: Execution completed (whether successful or failed). |
     | `suggested_rules` | `list[PermissionRule]` | Suggested authorization rules attached when the user confirms. |
   </Accordion>
 
