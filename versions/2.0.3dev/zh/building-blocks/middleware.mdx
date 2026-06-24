@@ -151,6 +151,72 @@ with tracer.start_as_current_span(
 
 这些自定义 span 会与 AgentScope 内置的 span 一并上报，发送到 `TracerProvider` 中配置的同一个 OTLP collector。
 
+### TTSMiddleware
+
+`TTSMiddleware` 拦截 agent 的文本输出并合成语音，将 `DataBlockStartEvent` / `DataBlockDeltaEvent` / `DataBlockEndEvent` 音频事件注入到事件流中。它在 `on_reply` 阶段拦截，观察每个 `TextBlockDeltaEvent` 和 `TextBlockEndEvent`。
+
+```python
+from agentscope.agent import Agent
+from agentscope.middleware import TTSMiddleware
+from agentscope.tts import DashScopeTTSModel
+from agentscope.credential import DashScopeCredential
+
+agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=model,
+    toolkit=toolkit,
+    middlewares=[
+        TTSMiddleware(
+            DashScopeTTSModel(
+                credential=DashScopeCredential(api_key="..."),
+                model="qwen3-tts-flash",
+                parameters=DashScopeTTSModel.Parameters(voice="Cherry"),
+                stream=True,
+            ),
+        ),
+    ],
+)
+```
+
+中间件根据 TTS 模型的模式自动适配：
+
+| TTS 模式 | 行为 |
+|----------|------|
+| 标准模式 (`realtime=False`) | 累积文本直到 `TextBlockEndEvent`，然后调用 `synthesize(text)` 一次性合成，将完整音频作为一个 data block 输出 |
+| 实时模式 (`realtime=True`) | 每个 `TextBlockDeltaEvent.delta` 通过 `push()` 推送，音频 chunk 即时输出；`TextBlockEndEvent` 时调用 `synthesize()` 刷新剩余音频 |
+
+输出事件流因模式而异：
+
+**标准模式** — 音频在文本块结束后输出：
+
+```
+TextBlockStartEvent
+TextBlockDeltaEvent (文本)
+TextBlockDeltaEvent (文本)
+TextBlockEndEvent
+DataBlockStartEvent           ← 文本结束后合成音频
+DataBlockDeltaEvent (音频)
+DataBlockDeltaEvent (音频)
+DataBlockEndEvent
+```
+
+**实时模式** — 音频 chunk 与文本交替到达（并发合成）：
+
+```
+TextBlockStartEvent
+TextBlockDeltaEvent (文本)
+DataBlockStartEvent           ← 文本流期间音频开始
+DataBlockDeltaEvent (音频)
+TextBlockDeltaEvent (文本)
+DataBlockDeltaEvent (音频)
+TextBlockEndEvent
+DataBlockDeltaEvent (音频)   ← synthesize() 刷新的剩余音频
+DataBlockEndEvent
+```
+
+每个 `DataBlockDeltaEvent.data` 携带增量 base64 编码的音频 chunk；完整音频为所有 delta 解码后的字节拼接，按 `block_id` 关联。
+
 ### 长期记忆
 
 AgentScope 以中间件的形式实现长期记忆，让 agent 能够在多个会话间持久保存并调取信息。记忆后端挂接 `on_reply`（reply 前检索 + reply 后写回）、`on_system_prompt`（声明记忆工具），并通过 `list_tools` 提供供 agent 调用的 memory 相关工具（例如 `search_memory` / `add_memory`）。当前可用的后端为 `Mem0Middleware`，由 [mem0](https://github.com/mem0ai/mem0) 驱动。安装方式、控制模式与构造方式详见[长期记忆](/versions/2.0.3dev/zh/building-blocks/long-term-memory)。
