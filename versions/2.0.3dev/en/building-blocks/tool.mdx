@@ -53,7 +53,8 @@ Methods that hook into execution and the permission system:
 | `check_read_only(tool_input)` | Optional | Per-invocation read-only check; returns `bool`. Defaults to `self.is_read_only`. Override when read-only-ness depends on the input (e.g. `Bash` — `ls` is read-only, `rm` is not). Used by the permission engine to decide auto-allow in EXPLORE / ACCEPT_EDITS. |
 | `match_rule(rule_content, tool_input)` | Optional | Custom rule-matching logic for the permission system; returns `bool` |
 | `generate_suggestions(tool_input)` | Optional | Generate suggested permission rules from a tool call; returns `list[PermissionRule]` |
-| `__call__(**kwargs)` | Optional | The tool's execution logic; returns `ToolChunk` or `AsyncGenerator[ToolChunk, None]`. Not required for external execution tools. |
+| `call(**kwargs)` | Yes* | The tool's execution logic — the subclass override point. Returns `ToolChunk` or `AsyncGenerator[ToolChunk, None]`. Not required for external execution tools (`is_external_tool = True`). |
+| `__call__(**kwargs)` | — | Framework dispatch entry point. Runs the middleware chain (if any), then delegates to `call()`. Do not override. |
 
 ### Use Built-in Tools
 
@@ -141,9 +142,15 @@ The file tools enforce a read-before-write rule: `Write` and `Edit` require the 
 
 `generate_suggestions()` proposes a glob covering the parent directory. For example, editing `/project/src/main.py` produces the suggestion `src/**`.
 
+#### Plan Tools (TaskCreate, TaskGet, TaskList, TaskUpdate)
+
+The plan tools give the agent a structured task list it can append to, query, and update through normal tool calls. They share a single store on `agent.state.tasks_context`, are state-injected, and always pass permission checks — the agent treats them as free-cost coordination primitives for breaking complex work into trackable steps.
+
+See [Plan](/versions/2.0.3dev/en/building-blocks/plan) for the full task lifecycle, the storage model, and how to seed or customize tasks programmatically.
+
 ### Create Custom Tool
 
-To create a custom tool, subclass `ToolBase`, declare its schema, and implement `check_permissions` and `__call__`:
+To create a custom tool, subclass `ToolBase`, declare its schema, and implement `check_permissions` and `call`:
 
 ```python
 from agentscope.tool import ToolBase, ToolChunk
@@ -176,7 +183,7 @@ class WebSearch(ToolBase):
             message="Web search is read-only.",
         )
 
-    async def __call__(self, query: str) -> ToolChunk:
+    async def call(self, query: str) -> ToolChunk:
         results = await do_search(query)
         return ToolChunk(content=[TextBlock(text=results)])
 ```
@@ -228,7 +235,7 @@ An external execution tool delegates its actual execution outside the agent runt
 
 This pattern underlies the [human-in-the-loop](/versions/2.0.3dev/en/building-blocks/agent) workflow, where certain actions require human approval or manual execution.
 
-To create an external execution tool, set `is_external_tool = True`. There is no need to implement `__call__`:
+To create an external execution tool, set `is_external_tool = True`. There is no need to implement `call`:
 
 ```python
 from agentscope.tool import ToolBase
@@ -259,6 +266,95 @@ class HumanApproval(ToolBase):
             message="External tool dispatch is always allowed.",
         )
 ```
+
+### Tool Middleware
+
+Tool middleware attaches onion-style hooks directly to a tool instance. Every time that tool is invoked — whether by an agent or called directly — the registered middlewares fire in order, wrap the execution, and can observe or transform both inputs and outputs.
+
+This is separate from agent-level middleware (`MiddlewareBase`): `on_acting` in agent middleware wraps the entire tool-call slot inside the ReAct loop (including permission checks and event emission), while `ToolMiddlewareBase` hooks only inside the tool's own `call()` execution chain and fires even when the tool is called outside any agent.
+
+#### ToolMiddlewareBase Interface
+
+Subclass `ToolMiddlewareBase` and implement the single abstract async-generator method `on_tool_call`:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `tool` | `ToolBase` | The tool instance being invoked |
+| `input_kwargs` | `dict[str, Any]` | Input arguments for this invocation. Pass (possibly modified) arguments to `next_handler` to control what the inner layers receive |
+| `next_handler` | `Callable[..., AsyncGenerator[ToolChunk, None]]` | Call as `next_handler(**input_kwargs)` to continue to the next layer. Always returns an async generator regardless of whether the underlying tool is streaming or not |
+
+#### Execution Model
+
+- The **first** registered middleware is the **outermost** layer — its pre-logic runs first, its post-logic runs last.
+- `next_handler(**input_kwargs)` always returns `AsyncGenerator[ToolChunk, None]`. Streaming and non-streaming tools are unified, so a middleware never needs to handle the two shapes separately.
+- The innermost layer calls the tool's own `call()`.
+
+```
+middlewares[0].on_tool_call
+  └─ middlewares[1].on_tool_call
+       └─ ... → tool.call()
+```
+
+#### Attach Middleware
+
+Pass a list of middleware instances to the tool constructor via the `middlewares` argument:
+
+```python
+from agentscope.tool import Bash
+
+bash = Bash(middlewares=[LoggingMiddleware(), MetricsMiddleware()])
+# Execution order: LoggingMiddleware → MetricsMiddleware → Bash.call()
+```
+
+#### Example
+
+A logging middleware that prints before and after each invocation, and a retry middleware that re-attempts on failure:
+
+```python
+from typing import AsyncGenerator, Any, Callable
+from agentscope.tool import ToolMiddlewareBase, ToolBase, ToolChunk, Bash
+
+
+class LoggingMiddleware(ToolMiddlewareBase):
+    async def on_tool_call(
+        self,
+        tool: ToolBase,
+        input_kwargs: dict[str, Any],
+        next_handler: Callable[..., AsyncGenerator[ToolChunk, None]],
+    ) -> AsyncGenerator[ToolChunk, None]:
+        print(f"→ Calling {tool.name} with {input_kwargs}")
+        async for chunk in next_handler(**input_kwargs):
+            yield chunk
+        print(f"✓ {tool.name} finished")
+
+
+class RetryMiddleware(ToolMiddlewareBase):
+    def __init__(self, max_attempts: int = 3):
+        self.max_attempts = max_attempts
+
+    async def on_tool_call(
+        self,
+        tool: ToolBase,
+        input_kwargs: dict[str, Any],
+        next_handler: Callable[..., AsyncGenerator[ToolChunk, None]],
+    ) -> AsyncGenerator[ToolChunk, None]:
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                async for chunk in next_handler(**input_kwargs):
+                    yield chunk
+                return
+            except Exception as e:
+                if attempt == self.max_attempts:
+                    raise
+                print(f"Attempt {attempt} failed: {e}, retrying…")
+
+
+bash = Bash(middlewares=[LoggingMiddleware(), RetryMiddleware(max_attempts=3)])
+```
+
+<Note>
+**Tool middleware vs. agent middleware** — use `ToolMiddlewareBase` for cross-cutting concerns that belong to the tool itself (logging, metrics, retry). Use `MiddlewareBase.on_acting` when you need access to the broader agent context — permission decisions, the tool-call event, or the surrounding ReAct round. See [Middleware](/versions/2.0.3dev/en/building-blocks/middleware) for the full agent-level hook reference.
+</Note>
 
 ## MCP
 
@@ -448,7 +544,7 @@ The meta tool input represents the **final state** of all groups, not incrementa
     Fine-grained control over which tools can execute and when
   </Card>
   <Card title="Middleware" icon="layer-group" href="/versions/2.0.3dev/en/building-blocks/middleware">
-    Intercept and transform tool calls with onion-style middleware
+    Intercept agent lifecycle hooks — reply, reasoning, model calls, and more
   </Card>
   <Card title="Human-in-the-Loop" icon="user" href="/versions/2.0.3dev/en/building-blocks/agent#human-in-the-loop">
     External execution tools and human approval workflows

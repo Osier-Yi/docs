@@ -41,19 +41,19 @@ This layering mirrors the natural frontend flow — register a credential first,
 
 ## Chat Model
 
-A **Chat Model** is the LLM that drives an agent's conversation and tool calls, accepting and producing multimodal content beyond plain text. AgentScope currently ships the following chat model classes:
+A chat model is the LLM that drives an agent's conversation and tool calls, accepting and producing multimodal content beyond plain text. AgentScope currently ships the following chat model classes:
 
-| Provider | Model Class | Highlights |
-|----------|-------------|------------|
-| OpenAI | `OpenAIChatModel` | Chat Completions API, compatible with vLLM and OpenAI-compatible endpoints |
-| OpenAI (Responses) | `OpenAIResponseModel` | Responses API with native reasoning support (o3, o4-mini) |
-| Anthropic | `AnthropicChatModel` | Claude models with extended thinking and prompt caching |
-| DashScope | `DashScopeChatModel` | Qwen models, multimodal (vision/audio/video), reasoning |
-| DeepSeek | `DeepSeekChatModel` | OpenAI-compatible with prompt cache hit tokens |
-| Gemini | `GeminiChatModel` | Google Gemini models with multimodal support |
-| Moonshot | `MoonshotChatModel` | Kimi models (OpenAI-compatible) |
-| xAI | `XAIChatModel` | Grok models with native reasoning effort |
-| Ollama | `OllamaChatModel` | Local LLM hosting, credential is optional |
+| Provider               | Model Class           |
+|------------------------|-----------------------|
+| OpenAI                 | `OpenAIChatModel`     |
+| OpenAI (Responses API) | `OpenAIResponseModel` |
+| Anthropic              | `AnthropicChatModel`  |
+| DashScope              | `DashScopeChatModel`  |
+| DeepSeek               | `DeepSeekChatModel`   |
+| Gemini                 | `GeminiChatModel`     |
+| Moonshot               | `MoonshotChatModel`   |
+| xAI                    | `XAIChatModel`        |
+| Ollama                 | `OllamaChatModel`     |
 
 ### Create Chat Model
 
@@ -208,7 +208,7 @@ asyncio.run(main())
 
 ### Formatter
 
-A **formatter** translates AgentScope's `Msg` objects into the `list[dict]` payload that each provider's API expects. It is configured via the optional `formatter` argument on the chat model constructor. Every provider ships two built-in variants:
+A formatter translates AgentScope's `Msg` objects into the `list[dict]` payload that each provider's API expects. It is configured via the optional `formatter` argument on the chat model constructor. Every provider ships two built-in variants:
 
 | Variant | Use Case |
 |---------|----------|

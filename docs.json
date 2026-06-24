@@ -73,7 +73,7 @@
                     "pages": [
                       "versions/2.0.3dev/en/index",
                       "versions/2.0.3dev/en/quickstart",
-                      "versions/2.0.3dev/en/change-log"
+                      "versions/2.0.3dev/en/release-notes"
                     ]
                   },
                   {
@@ -84,6 +84,7 @@
                       "versions/2.0.3dev/en/building-blocks/model",
                       "versions/2.0.3dev/en/building-blocks/context",
                       "versions/2.0.3dev/en/building-blocks/tool",
+                      "versions/2.0.3dev/en/building-blocks/plan",
                       "versions/2.0.3dev/en/building-blocks/permission-system",
                       "versions/2.0.3dev/en/building-blocks/middleware",
                       "versions/2.0.3dev/en/building-blocks/long-term-memory",
@@ -91,7 +92,7 @@
                     ]
                   },
                   {
-                    "group": "Deploy",
+                    "group": "Agent as Service",
                     "pages": [
                       "versions/2.0.3dev/en/deploy/agent-service",
                       "versions/2.0.3dev/en/deploy/agent-team",
@@ -104,7 +105,8 @@
                   {
                     "group": "Others",
                     "pages": [
-                      "versions/2.0.3dev/en/others/faq"
+                      "versions/2.0.3dev/en/others/faq",
+                      "versions/2.0.3dev/en/others/change-log"
                     ]
                   }
                 ]
@@ -266,7 +268,7 @@
                     "pages": [
                       "versions/2.0.3dev/zh/index",
                       "versions/2.0.3dev/zh/quickstart",
-                      "versions/2.0.3dev/zh/change-log"
+                      "versions/2.0.3dev/zh/release-notes"
                     ]
                   },
                   {
@@ -277,6 +279,7 @@
                       "versions/2.0.3dev/zh/building-blocks/model",
                       "versions/2.0.3dev/zh/building-blocks/context",
                       "versions/2.0.3dev/zh/building-blocks/tool",
+                      "versions/2.0.3dev/zh/building-blocks/plan",
                       "versions/2.0.3dev/zh/building-blocks/permission-system",
                       "versions/2.0.3dev/zh/building-blocks/middleware",
                       "versions/2.0.3dev/zh/building-blocks/long-term-memory",
@@ -284,7 +287,7 @@
                     ]
                   },
                   {
-                    "group": "部署",
+                    "group": "Agent 即服务",
                     "pages": [
                       "versions/2.0.3dev/zh/deploy/agent-service",
                       "versions/2.0.3dev/zh/deploy/agent-team",
@@ -297,7 +300,8 @@
                   {
                     "group": "其他",
                     "pages": [
-                      "versions/2.0.3dev/zh/others/faq"
+                      "versions/2.0.3dev/zh/others/faq",
+                      "versions/2.0.3dev/zh/others/change-log"
                     ]
                   }
                 ]
