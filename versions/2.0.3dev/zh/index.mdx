@@ -1,42 +1,37 @@
 ---
 title: "AgentScope 2.0 是什么？"
-description: "更安全、更高效、更灵活、更完备"
+description: "安全、高效、灵活、完备"
 ---
 
-AgentScope 2.0 是对框架的一次重大升级，核心目标是提升开发体验，让智能体在生产环境中更易构建和运行。
+AgentScope 2.0 是一款安全、高效、灵活且完备的生产级智能体框架——并将**多租户**、**多会话管理**和**分布式部署**作为一等公民原生支持。
 
 <Note>
-	AgentScope 2.0 与 1.0 存在破坏性变更，在核心抽象、API 和架构上均有大幅改进。建议现有用户迁移到 2.0，以享受新特性带来的提升。
+	AgentScope 2.0 与 1.0 之间存在破坏性变更，进行了全方位的改进。我们强烈建议现有用户迁移至 2.0 版本，以充分利用这些全新特性与体验升级。
 </Note>
 
-2.0 带来了以下主要变化和改进：
+- **安全**：依托特定工具审计、人机协同（Human-in-the-Loop）权限系统与沙箱安全隔离，构筑三位一体的安全防线。
+- **高效**：依据工具特性柔性编排，支持多工具并发或顺序智能调度，在保证正确性的前提下大幅提升执行效率。
+- **灵活**：借助智能体与工具双重中间件，无需修改核心逻辑，即可无侵入地定制和重塑智能体运行时行为。
+- **完备**：覆盖从轻量级 UI、开箱即用 SDK，到支持多租户、多会话并发管理后端及分布式部署的完整工具链。
 
-- **事件系统**：智能体的每一步操作——文本输出、思考过程、工具调用、工具结果——都以类型化的流式事件暴露出来，无需额外适配器即可渲染丰富的响应式界面，并轻松接入 AG-UI 或 A2A。
-- **执行安全**：危险的工具调用可被拦截或暂缓审查，不受信任的代码可在沙箱中运行——智能体不会悄悄操作宿主机或泄露凭据。
-- **人工介入**：用户可以在运行中途确认或修改工具参数，敏感操作也可转交自定义后端处理，智能体会在暂停处精确恢复执行。
-- **更高效率**：多工具步骤通过并发执行加速完成，长对话自动保持在上下文窗口内，超大工具输出不再撑爆提示词，模型提供商的短暂故障也能优雅回退。
-- **工作区系统**：只需修改一行代码，就能将智能体从本地迁移到 Docker 或 E2B 沙箱，工作目录、MCP 客户端和技能集均按用户、智能体或会话独立隔离。
-- **智能体服务**：通过 REST + SSE 托管任意智能体，支持多租户、多 Session 并发，内置可续传流、持久化会话、定时任务和凭据管理，无需自己搭建服务脚手架。
+## 全栈能力，生产级打磨
 
-对于正在评估是否进行迁移的开发者，可以查阅 [Changelog](/versions/2.0.3dev/zh/change-log) 了解每项变更的完整说明，帮助更好地规划迁移到 AgentScope 2.0 的计划。
+从单智能体推理到复杂企业级应用，AgentScope 为开发者提供覆盖其完整生命周期的全栈支持。
 
-<CardGroup cols={2}>
-	<Card title="事件系统" icon="wave-pulse" href="/versions/2.0.3dev/zh/building-blocks/message-and-event">
-		观测智能体的每一步操作，直接流式推送到界面。
+<CardGroup cols={1}>
+	<Card title="ReAct 智能体" icon="robot" href="/versions/2.0.3dev/zh/building-blocks/agent" cta="立即上手">
+		具备自主 ReAct 推理和多工具协同执行能力的智能体，内置人机协作审核与高并发工具调度机制。
 	</Card>
-	<Card title="执行安全" icon="shield-halved" href="/versions/2.0.3dev/zh/building-blocks/permission-system">
-		在危险工具调用触达宿主机之前进行拦截或沙箱隔离。
+	<Card title="多维工具包" icon="toolbox" href="/versions/2.0.3dev/zh/building-blocks/tool" cta="了解工具包">
+		智能体自主管理的工具栈体系，支持原生 Python 函数、MCP（模型上下文协议）和多种外部技能（Skill）的无缝拼装。
 	</Card>
-	<Card title="人工介入" icon="user-check" href="/versions/2.0.3dev/zh/building-blocks/message-and-event">
-		支持在执行前审核或修改工具参数，也可将敏感操作完全转交自定义后端处理。
+	<Card title="上下文管理" icon="memory" href="/versions/2.0.3dev/zh/building-blocks/context" cta="查看上下文管理">
+		精细化的上下文剪裁、卸载与智能体主动检索，深度融合了 Mem0、ReMe 等第三方记忆实现。
 	</Card>
-	<Card title="高效智能体" icon="gauge-high" href="/versions/2.0.3dev/zh/building-blocks/agent">
-		工具调用根据各工具的属性自动分批，并发或顺序执行——在保证正确性的前提下获得更高的吞吐效率。
+	<Card title="安全沙箱隔离" icon="codepen" href="/versions/2.0.3dev/zh/building-blocks/workspace" cta="了解沙箱">
+		支持在物理隔离的安全环境（如本地隔离沙箱、Docker、E2B、Kubernetes 等）中安全执行外部代码，支持用户、智能体、会话三级精细隔离。
 	</Card>
-	<Card title="工作区系统" icon="cube" href="/versions/2.0.3dev/zh/building-blocks/workspace">
-		无需重写智能体即可在本地、Docker 或 E2B 之间自由切换。
-	</Card>
-	<Card title="智能体服务" icon="server" href="/versions/2.0.3dev/zh/deploy/agent-service">
-		通过 REST + SSE 部署智能体，支持多租户、多 Session 并发，内置会话管理、定时任务和凭据管理。
+	<Card title="智能体即服务" icon="server" href="/versions/2.0.3dev/zh/deploy/agent-service" cta="了解智能体服务">
+		一键部署的生产级后端，自带可视化前端与开发 SDK，多租户多会话并发与分布式集群调度触手可得。
 	</Card>
 </CardGroup>

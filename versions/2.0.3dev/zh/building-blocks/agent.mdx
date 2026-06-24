@@ -5,14 +5,14 @@ description: "了解如何在 AgentScope v2.0 中定义和配置智能体"
 
 ## 概述
 
-`Agent` 是 AgentScope 的核心抽象——一个**无状态**的推理-行动循环引擎，将模型、工具、权限系统、人机交互、上下文管理、中间件、状态管理和事件系统整合到一个统一接口中。
+`Agent` 是智能体的核心抽象——一个**无状态**的推理-行动循环引擎，将模型、工具、权限系统、人机交互、上下文管理、中间件、状态管理和事件系统整合到一个统一接口中。
 
 其主要职责包括：
 
 - 接收输入消息或事件，调用工具完成任务
 - 管理上下文，包括上下文压缩和工具结果卸载
-- 在关键生命周期阶段提供中间件钩子，支持自定义逻辑
-- 自动管理并发和串行工具执行
+- 在生命周期阶的关键节点运行中间件
+- 自动编排工具并发和顺序执行
 
 ### 核心接口
 
@@ -31,13 +31,13 @@ description: "了解如何在 AgentScope v2.0 中定义和配置智能体"
 
 ```mermaid
 flowchart TD
-    A([输入: 消息 / 事件]) --> B{等待\n外部事件?}
-    B -- 是 --> C[处理事件\n更新工具状态]
-    B -- 否 --> D[将消息添加到上下文]
+    A([输入: 消息 / 事件]) --> B{等待外部事件?<br/>（用户确认 / 外部执行结果）}
+    B -- 是 --> C[处理事件<br/>更新工具状态]
+    B -- 否 --> D[将输入消息添加到上下文]
     C --> E
     D --> E
 
-    E{检查下一步动作} -- 退出 --> F([返回: 等待\n外部交互])
+    E{检查下一步动作} -- 仍有未确认的工具调用/外部执行结果 --> F([返回: 等待下一次外部输入])
     E -- 推理 --> G[必要时压缩上下文]
     G --> H[LLM 调用]
     H -- 无工具调用 --> I([返回最终消息])
@@ -45,10 +45,10 @@ flowchart TD
 
     subgraph Acting [行动]
         direction TB
-        J[批量工具调用\n串行 / 并发] --> L[执行工具调用]
-        L --> M{权限\n检查}
+        J[批量工具调用<br/>串行 / 并发] --> L[执行工具调用]
+        L --> M{权限<br/>检查}
         M -- 允许 --> N[运行工具 → 结果]
-        M -- 询问 / 外部 --> O([暂停并发出\nRequireUserConfirmEvent])
+        M -- 询问 / 外部 --> O([暂停并发出<br/>RequireUserConfirmEvent])
         M -- 拒绝 --> P[将错误结果返回 LLM]
     end
 
@@ -77,7 +77,7 @@ agent = Agent(
 )
 ```
 
-```python 配置工具 / MCP / 技能
+```python 配置工具/MCP/技能
 import os
 from agentscope.agent import Agent
 from agentscope.tool import Toolkit, Bash, Edit, Grep, Read, Write
@@ -87,7 +87,7 @@ from agentscope.credential import DashScopeCredential
 
 agent = Agent(
     name="my_agent",
-    system_prompt="你是一个有帮助的助手。",
+    system_prompt="你是一个AI助手。",
     model=DashScopeChatModel(
         credential=DashScopeCredential(api_key="YOUR_API_KEY"),
         model="qwen-max",
@@ -158,7 +158,7 @@ agent = Agent(
 
 ### reply
 
-`reply` 在内部消费所有事件，当智能体完成或因外部交互暂停时返回最终 `Msg`。
+`reply` 直接返回最终的 `Msg`，适合一次性获取结果的场景。
 
 ```python
 import asyncio
@@ -174,21 +174,30 @@ asyncio.run(main())
 
 ### reply_stream
 
-`reply_stream` 逐一产出 `AgentEvent` 对象，让你实时将文本输出、工具调用进度和生命周期事件流式传输给用户。
+`reply_stream` 流式返回 `AgentEvent` 对象，用于前端渲染和用户交互。
 
 ```python
 async def main():
     msg = UserMsg(name="user", content="总结一下 README 的内容。")
     async for event in agent.reply_stream(msg):
-        if hasattr(event, "delta"):
-            print(event.delta, end="", flush=True)
+        # 根据 `event.type` 分发处理 —— 每个分支对应一种事件类型。
+        match event.type:
+            case EventType.TEXT_BLOCK_DELTA:
+                # 模型返回的流式文本片段 —— 追加到界面或标准输出。
+                ...
+            case EventType.TOOL_CALL_START:
+                # 智能体即将调用工具 —— 展示调用信息。
+                ...
+            case _:
+                # 其他事件：思考块、工具结果、回复结束等。
+                ...
 
 asyncio.run(main())
 ```
 
 ### observe
 
-使用 `observe` 将消息注入智能体上下文而不触发 reply——适用于多智能体场景中，一个智能体需要观察另一个智能体输出的情况。
+使用 `observe` 将输入消息注入智能体上下文，但不触发 reply，静默接收外界消息。
 
 ```python
 await agent.observe(other_agent_msg)
@@ -208,7 +217,10 @@ await agent.compress_context()
 
 # 或为本次调用传入自定义配置
 await agent.compress_context(
-    ContextConfig(trigger_ratio=0.6, reserve_ratio=0.2)
+    ContextConfig(
+		trigger_ratio=0.6,
+		reserve_ratio=0.2,
+	)
 )
 ```
 
@@ -220,7 +232,7 @@ await agent.compress_context(
 
 ## 人机交互
 
-当智能体遇到以下两种情况时，会暂停执行并发出特殊事件：需要**用户确认**的工具调用（权限系统返回 ASK），或标记为**外部执行**的工具（结果必须来自智能体外部）。两种情况下，都可以通过向 `reply` 传入结果事件来恢复智能体。
+当智能体遇到以下两种情况时，会暂停执行并发出特殊事件：需要**用户确认**的工具调用（权限系统返回 ASK），或标记为**外部执行**的工具（结果必须来自智能体外部）。两种情况下，都可以通过向`reply`/`reply_stream`传入结果事件来恢复智能体。
 
 ### 用户确认
 
@@ -261,11 +273,13 @@ await agent.compress_context(
 
     confirm_results = []
     for tc in event.tool_calls:
-        confirm_results.append(ConfirmResult(
-            confirmed=True,           # 或 False 表示拒绝
-            tool_call=tc,             # 传回（可选择修改）
-            rules=tc.suggested_rules, # 接受规则以便未来自动允许
-        ))
+        confirm_results.append(
+	        ConfirmResult(
+	            confirmed=True,           # 或 False 表示拒绝
+	            tool_call=tc,             # 传回（可选择修改）
+	            rules=tc.suggested_rules, # 接受规则以便未来自动允许
+	        )
+	    )
     ```
   </Step>
   <Step title="恢复智能体">
@@ -287,7 +301,7 @@ await agent.compress_context(
 
 ### 外部工具执行
 
-当智能体调用 `is_external_tool = True` 的工具时，会发出 `RequireExternalExecutionEvent` 并暂停。工具的逻辑在智能体外部运行——通常由人工操作员或外部系统执行。
+当智能体调用 `is_external_tool = True` 的工具时，会发出 `RequireExternalExecutionEvent` 并暂停。工具的逻辑在智能体外部运行——通常由外部系统（例如前端）执行。
 
 <Steps>
   <Step title="接收 RequireExternalExecutionEvent">

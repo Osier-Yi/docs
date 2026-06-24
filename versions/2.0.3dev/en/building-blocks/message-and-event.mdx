@@ -12,10 +12,11 @@ A sequence of events produced during a single `reply` call accumulates into exac
 
 ## Message
 
-A `Msg` represents a single turn in a conversation — a user input, an assistant response, or a system instruction, carrying structured content as a list of typed blocks.
+An instance of the `Msg` class in AgentScope contains a complete conversation turn — a user input, or a complete assistant response, organized through different types of content blocks (Blocks).
 
 <Tip>
-	One assistant message corresponds to one complete `reply` cycle of the agent (repeated reasoning and acting until a final response is produced).
+1. Running an agent's `reply_stream` once produces a complete `Msg` instance, containing all information such as multiple rounds of reasoning, tool calls, and execution results.
+2. During frontend rendering, a `Msg` instance corresponds to a single complete message bubble.
 </Tip>
 
 ### Structure
@@ -37,53 +38,179 @@ The `Msg` class has the following core fields:
 
 Message content is composed of typed blocks. Each block represents a distinct piece of information:
 
-| Block             | Description                                         | Allowed In              |
-|-------------------|-----------------------------------------------------|-------------------------|
-| `TextBlock`       | Plain text content                                  | user, assistant, system |
-| `DataBlock`       | Binary data (images, audio) via base64 or URL       | user, assistant         |
-| `ThinkingBlock`   | Model reasoning (chain-of-thought)                  | assistant               |
-| `ToolCallBlock`   | A tool invocation with name, input, and state       | assistant               |
-| `ToolResultBlock` | The output of a tool execution                      | assistant               |
-| `HintBlock`       | Out-of-band hint injected into the conversation (e.g. a scheduled-task trigger, a team message, a background-tool result). The `hint` field is `str` for plain text or `list[TextBlock \| DataBlock]` for multimodal payloads; `source` carries a small JSON tag the frontend uses to label the hint's origin. | assistant               |
+| Block Type | Description |
+|---|---|
+| `TextBlock` | Plain text content |
+| `DataBlock` | Binary data (images, audio, video, etc.), either via base64 or URL |
+| `ThinkingBlock` | Model reasoning (chain-of-thought) |
+| `ToolCallBlock` | Tool call, containing name, input, and state |
+| `ToolResultBlock` | Tool execution result |
+| `HintBlock` | Hint information (e.g., scheduled-task triggers, team messages, background tool results); supports multimodal data and uses `source` to identify the hint's origin. |
 
 <Note>
-Role constraints are enforced at construction: `user` messages can only contain `TextBlock` and `DataBlock`; `system` messages can only contain `TextBlock`; `assistant` messages can contain all block types.
+Role constraints are enforced at construction:
+- `msg.role=="user"` messages can only contain `TextBlock` and `DataBlock`;
+- `msg.role=="system"` messages can only contain `TextBlock`;
+- `msg.role=="assistant"` messages can contain all block types.
 </Note>
+
+These content blocks carry different data information, and their detailed fields are described below:
+
+<AccordionGroup>
+  <Accordion title="TextBlock" description="Text data">
+
+    | Field | Type | Description |
+    |------|------|-------------|
+    | `type` | `str` | Fixed as `"text"`. |
+    | `text` | `str` | The actual text content. |
+    | `id` | `str` | The unique identifier of the content block (auto-generated UUID by default). |
+  </Accordion>
+
+  <Accordion title="ThinkingBlock" description="The model's reasoning process">
+	This content block allows passing through custom metadata defined by the model provider (such as the `signature` in Anthropic models, etc.).
+
+    | Field | Type | Description |
+    |------|------|-------------|
+    | `type` | `str` | Fixed as `"thinking"`. |
+    | `thinking` | `str` | The reasoning or chain-of-thought text of the model. |
+    | `id` | `str` | The unique identifier of the content block (auto-generated UUID by default). |
+  </Accordion>
+
+  <Accordion title="DataBlock" description="Multimodal data (such as image, audio, video, etc.)">
+
+    | Field | Type | Description |
+    |------|------|-------------|
+    | `type` | `str` | Fixed as `"data"`. |
+    | `id` | `str` | The unique identifier of the content block (auto-generated UUID by default). |
+    | `source` | `Base64Source \| URLSource` | Identifies the data source. Supports Base64 input or URL input. |
+    | `name` | `str \| None` | Optional field, indicating the name of this content asset. |
+
+    **Data Source Configuration:**
+    - **`Base64Source`**:
+      - `type`: Fixed as `"base64"`.
+      - `data`: Base64-encoded binary data.
+      - `media_type`: Media type (e.g., `"image/png"`, `"audio/mpeg"`, `"video/mp4"`, etc.).
+    - **`URLSource`**:
+      - `type`: Fixed as `"url"`.
+      - `url`: A valid URI/URL string satisfying the RFC 3986 standard.
+      - `media_type`: Media type (e.g., `"image/png"`, `"audio/wav"`, etc.).
+  </Accordion>
+
+  <Accordion title="HintBlock" description="Hint information used to guide the LLM">
+	When finally passed to the LLM API, `HintBlock` is also converted to a standard user message (User message).
+
+	To avoid confusion with user inputs, it is recommended to use XML tags (e.g., `<system-reminder>...</system-reminder>`) to wrap the hint content.
+
+    | Field | Type | Description |
+    |------|------|-------------|
+    | `type` | `str` | Fixed as `"hint"`. |
+    | `hint` | `str \| list[TextBlock \| DataBlock]` | The hint content — supports either plain text or a list of compound multimodal blocks. |
+    | `id` | `str` | The unique identifier of the content block (auto-generated UUID by default). |
+    | `source` | `str \| None` | Sender/origin label of the hint (can be a JSON string for frontend parsing and rendering). |
+  </Accordion>
+
+  <Accordion title="ToolCallBlock" description="Data and state of a tool call">
+
+    | Field | Type | Description |
+    |------|------|-------------|
+    | `type` | `str` | Fixed as `"tool_call"`. |
+    | `id` | `str` | Unique identifier for this tool call. |
+    | `name` | `str` | Name of the tool to be called. |
+    | `input` | `str` | Tool call parameters in JSON string format. |
+    | `state` | `ToolCallState` | Tool call state:<br/>• `"pending"`: Pending, has not passed verification and permission checks.<br/>• `"asking"`: Suspended, waiting for user authorization.<br/>• `"allowed"`: Approved by the user or permission rules, waiting to execute.<br/>• `"submitted"`: Submitted externally and waiting for execution results.<br/>• `"finished"`: Execution compiled (whether successful or failed). |
+    | `suggested_rules` | `list[PermissionRule]` | Suggested authorization rules attached when the user confirms. |
+  </Accordion>
+
+  <Accordion title="ToolResultBlock" description="Data and state of tool execution results">
+    The `id` of a `ToolResultBlock` must match the `id` of the launching `ToolCallBlock`. Supports multimodal data.
+
+    | Field | Type | Description |
+    |------|------|-------------|
+    | `type` | `str` | Fixed as `"tool_result"`. |
+    | `id` | `str` | Unique ID matching the corresponding tool call. |
+    | `name` | `str` | Name of the tool called. |
+    | `output` | `str \| list[TextBlock \| DataBlock]` | Execution output — supports either plain text or multimodal data. |
+    | `state` | `ToolResultState` | Tool execution state:<br/>• `"running"`: Tool executing.<br/>• `"success"`: Finished successfully.<br/>• `"error"`: Finished with error.<br/>• `"interrupted"`: Interrupted by the user.<br/>• `"denied"`: Denied execution by the user or security rules. |
+  </Accordion>
+</AccordionGroup>
 
 ### Create Messages
 
-AgentScope provides three shortcut factory functions for quickly creating messages with the correct role, without manually specifying `role` or wrapping content into blocks:
+AgentScope provides three shortcut methods to construct `Msg` objects to avoid repeatedly setting the `role` parameter, and supports building `TextBlock`s from strings:
 
-| Factory                       | Role        | Allowed Content                         |
-|-------------------------------|-------------|-----------------------------------------|
-| `UserMsg(name, content)`      | `user`      | `str` or `list[TextBlock \| DataBlock]` |
-| `AssistantMsg(name, content)` | `assistant` | `str` or `list[ContentBlock]`           |
-| `SystemMsg(name, content)`    | `system`    | `str` or `list[TextBlock]`              |
+| Factory Function | Role |
+|---|---|
+| `UserMsg(name, content)` | `user` |
+| `AssistantMsg(name, content)` | `assistant` |
+| `SystemMsg(name, content)` | `system` |
 
-When `content` is a plain string, it is automatically wrapped into a `TextBlock`.
+When the `content` parameter is a string, it is automatically wrapped into a `TextBlock`.
 
-```python
-from agentscope.message import UserMsg, AssistantMsg, SystemMsg
+<CodeGroup>
+```python Create Text Message
+from agentscope.message import UserMsg, SystemMsg, AssistantMsg
 
-# User message — text and optional images
-user_msg = UserMsg(name="user", content="What's in this image?")
+# User message
+user_msg = UserMsg(
+    name="user",
+    content="What's in this image?"
+)
 
-# User message with multimodal content
-from agentscope.message import TextBlock, DataBlock, Base64Source
+# System message, used only for system prompts
+system_msg = SystemMsg(
+    name="system",
+    content="You are an AI assistant named Friday."
+)
+
+# Assistant message
+assistant_msg = AssistantMsg(
+    name="Friday",
+    content="Hello, how can I help you today?"
+)
+```
+
+```python Create Multimodal Message
+from agentscope.message import UserMsg, TextBlock, DataBlock, Base64Source
+
+# User message
 user_msg = UserMsg(
     name="user",
     content=[
         TextBlock(text="Describe this image:"),
-        DataBlock(source=Base64Source(data="...", media_type="image/png")),
+        DataBlock(
+            source=Base64Source(
+                data="...",
+                media_type="image/png"
+            )
+        ),
     ],
 )
-
-# System message — text only
-system_msg = SystemMsg(name="system", content="You are a helpful assistant.")
-
-# Assistant message — all block types allowed
-assistant_msg = AssistantMsg(name="agent", content="Here is the result...")
 ```
+
+```python Create Tool Call Message
+from agentscope.message import AssistantMsg, ThinkingBlock, TextBlock, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState
+
+assistant_msg = AssistantMsg(
+    name="Friday",
+    content=[
+        ThinkingBlock(thinking="I should invoke a tool to search for the weather."),
+        TextBlock(text="Let me search the weather in Beijing."),
+        ToolCallBlock(
+            id="tool_call_1",
+            name="weather_search",
+            input='{"city": "Beijing"}',
+            state=ToolCallState.FINISHED,
+        ),
+        ToolResultBlock(
+            id="tool_call_1",
+            name="weather_search",
+            output="The weather in Beijing is sunny, with a temperature of 25°C.",
+            state=ToolResultState.SUCCESS,
+        ),
+    ]
+)
+```
+</CodeGroup>
 
 ### Access Content
 
@@ -446,25 +573,32 @@ The `append_event` method handles all event types:
 | `ExternalExecutionResultEvent` | Appends `ToolResultBlock`s to content |
 
 <Tip>
-This design enables flexible deployment: a backend can stream events over WebSocket to a frontend, which reconstructs the message client-side. If the connection drops, replaying the event sequence from any checkpoint restores the exact message state.
+This design makes deployment more flexible: the backend can stream events via SSE to the frontend, which reconstructs and renders the message in real time. Even if the connection is interrupted, replaying the event sequence from any checkpoint can restore the exact message state.
 </Tip>
 
 ### TypeScript Support
 
-A TypeScript version of the message and event primitives is available on npm, so frontends can reconstruct messages from the event stream with the same `appendEvent` API:
+AgentScope provides TypeScript versions of messages and event primitives, so frontends can use the exact same `appendEvent` API to reconstruct messages from the event stream.
+
+Install the TypeScript version of AgentScope:
 
 ```bash
 pnpm install @agentscope-ai/agentscope
 ```
 
+Example of receiving and reconstructing messages on the frontend:
+
 ```typescript
-import { AssistantMsg, ReplyStartEvent } from "@agentscope-ai/agentscope/message";
+import { Msg, AssistantMsg, EventType } from "@agentscope-ai/agentscope/message";
 
-let msg: AssistantMsg | null = null;
-
+let msg: Msg | null = null;
 for await (const event of stream) {
-    if (event.type === "REPLY_START") {
-        msg = new AssistantMsg({ name: event.name, content: [], id: event.reply_id });
+    if (event.type === EventType.REPLY_START) {
+        msg = new AssistantMsg({
+			name: event.name,
+			content: [],
+			id: event.reply_id
+		});
     } else {
         msg?.appendEvent(event);
     }
