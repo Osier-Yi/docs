@@ -1,11 +1,11 @@
 ---
 title: "模型"
-description: "在 AgentScope 中配置并连接 LLM 模型提供商"
+description: "驱动智能体的 LLM、TTS、Embedding 与 Realtime 模型"
 ---
 
 ## 概述
 
-模型层采用两层结构：上层是 **Credential**，下层是该提供商支持的若干模型族 —— **Chat Model**、**TTS**、**Embedding** 与 **Realtime Model**。
+AgentScope 的模型层由 API 凭证（Credential）和模型族组成。一个凭证对应一个 API（例如 OpenAI，Gemini，DashScope等），并对应该 API 下的若干模型族（LLM，TTS，Embedding，Realtime）。
 
 <Tree>
   <Tree.Folder name="Credential" defaultOpen>
@@ -38,21 +38,21 @@ description: "在 AgentScope 中配置并连接 LLM 模型提供商"
 
 **Chat Model** 是驱动 agent 对话与工具调用的 LLM，输入输出可以是文本之外的多模态内容。AgentScope 当前提供以下 Chat Model 类：
 
-| 提供商 | 模型类 | 说明 |
-|--------|--------|------|
-| OpenAI | `OpenAIChatModel` | Chat Completions API，兼容 vLLM 与 OpenAI 兼容端点 |
-| OpenAI (Responses) | `OpenAIResponseModel` | Responses API，原生支持推理（o3、o4-mini） |
-| Anthropic | `AnthropicChatModel` | Claude 模型，支持 extended thinking 与 prompt 缓存 |
-| DashScope | `DashScopeChatModel` | Qwen 模型，多模态（视觉/音频/视频）、推理 |
-| DeepSeek | `DeepSeekChatModel` | OpenAI 兼容，带 prompt cache 命中 token |
-| Gemini | `GeminiChatModel` | Google Gemini 模型，支持多模态 |
-| Moonshot | `MoonshotChatModel` | Kimi 模型（OpenAI 兼容） |
-| xAI | `XAIChatModel` | Grok 模型，原生 reasoning effort |
-| Ollama | `OllamaChatModel` | 本地 LLM 托管，凭证可选 |
+| 提供商                | 模型类                   |
+|--------------------|-----------------------|
+| OpenAI             | `OpenAIChatModel`     |
+| OpenAI (Responses) | `OpenAIResponseModel` |
+| Anthropic          | `AnthropicChatModel`  |
+| DashScope          | `DashScopeChatModel`  |
+| DeepSeek           | `DeepSeekChatModel`   |
+| Gemini             | `GeminiChatModel`     |
+| Moonshot           | `MoonshotChatModel`   |
+| xAI                | `XAIChatModel`        |
+| Ollama             | `OllamaChatModel`     |
 
 ### 创建 Chat Model
 
-每个 Chat Model 接收一个凭证、一个模型名，以及可选的提供商专属 `Parameters` 对象。下面三个 tab 分别展示流式、工具调用与推理三种典型初始化场景：
+每个 Chat Model 接收一个 API 凭证、一个模型名，以及可选的提供商专属 `Parameters` 对象。下面分别展示流式、工具调用与推理三种典型初始化场景：
 
 <CodeGroup>
 ```python Streaming
@@ -127,7 +127,7 @@ async def __call__(
 返回类型取决于模型的 `stream` 设置：
 
 - **`stream=False`** —— 返回单个 `ChatResponse`，承载完整输出。
-- **`stream=True`** —— 返回 `AsyncGenerator[ChatResponse, None]`。中间 chunk（`is_last=False`）只携带本步生成的**增量**内容。为了让调用方无需自行累积增量，AgentScope 会在末尾追加一个 `is_last=True` 的 chunk，承载**完整的累积内容**。
+- **`stream=True`** —— 返回 `AsyncGenerator[ChatResponse, None]`。中间 chunk（`is_last=False`）只携带**增量**内容。为了让开发者无需自行累积增量，AgentScope 会在末尾追加一个 `is_last=True` 的 chunk，承载**完整的累积内容**。
 
 ```python
 import asyncio
