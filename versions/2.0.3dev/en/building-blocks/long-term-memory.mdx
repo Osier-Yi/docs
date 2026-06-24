@@ -7,7 +7,7 @@ description: "Persist knowledge across sessions with middleware-based long-term 
 
 **Long-term memory** lets an agent store and retrieve durable information across sessions — user preferences, past decisions, and knowledge that should persist beyond a single conversation.
 
-In AgentScope, long-term memory is implemented as [middleware](/versions/2.0.3dev/en/building-blocks/middleware). A **memory backend** is a middleware implementation that connects to a specific memory extraction and storage service (such as mem0) — for example, `Mem0Middleware`. Each backend is a `MiddlewareBase` subclass that can hook into any position of the agent lifecycle as needed. For example:
+In AgentScope, memory extraction and storage services (such as mem0 and ReMe) serve as long-term memory backends, integrated into agents as [middleware](/versions/2.0.3dev/en/building-blocks/middleware). Each memory middleware is a `MiddlewareBase` subclass that can hook into any position of the agent lifecycle as needed. For example:
 
 - `on_reply` — search the store before a reply and write the new exchange back afterward.
 - `on_system_prompt` — advertise memory tools to the model.

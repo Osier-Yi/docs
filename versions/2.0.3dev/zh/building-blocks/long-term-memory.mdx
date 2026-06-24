@@ -7,7 +7,7 @@ description: "通过基于中间件的长期记忆后端，让知识在多个会
 
 **长期记忆**让 agent 在多次会话之间保留并检索可持久化的信息，例如用户偏好、历史决策，以及需要在后续对话中反复使用的知识。
 
-在 AgentScope 中，长期记忆以[中间件](/versions/2.0.3dev/zh/building-blocks/middleware)的形式实现。**记忆后端**指对接具体记忆提取和存储服务（如 mem0）的中间件实现，例如 `Mem0Middleware`。每个记忆后端是一个 `MiddlewareBase` 子类，可以按需挂接到 agent 生命周期的 hook 位置。例如：
+在 AgentScope 中，记忆提取和存储服务（如 mem0、ReMe）作为长期记忆后端，以[中间件](/versions/2.0.3dev/zh/building-blocks/middleware)的形式集成到 agent 中。每个记忆中间件是一个 `MiddlewareBase` 子类，可以按需挂接到 agent 生命周期的 hook 位置。例如：
 
 - `on_reply` —— 在 reply 前检索记忆，在 reply 后把新的对话写回。
 - `on_system_prompt` —— 向模型声明记忆工具。
