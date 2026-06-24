@@ -87,6 +87,7 @@
                       "versions/2.0.3dev/en/building-blocks/plan",
                       "versions/2.0.3dev/en/building-blocks/permission-system",
                       "versions/2.0.3dev/en/building-blocks/middleware",
+                      "versions/2.0.3dev/en/building-blocks/long-term-memory",
                       "versions/2.0.3dev/en/building-blocks/workspace"
                     ]
                   },
@@ -281,6 +282,7 @@
                       "versions/2.0.3dev/zh/building-blocks/plan",
                       "versions/2.0.3dev/zh/building-blocks/permission-system",
                       "versions/2.0.3dev/zh/building-blocks/middleware",
+                      "versions/2.0.3dev/zh/building-blocks/long-term-memory",
                       "versions/2.0.3dev/zh/building-blocks/workspace"
                     ]
                   },
