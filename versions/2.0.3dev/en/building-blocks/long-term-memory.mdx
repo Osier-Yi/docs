@@ -5,9 +5,9 @@ description: "Persist knowledge across sessions with middleware-based long-term 
 
 ## Overview
 
-An agent's short-term memory lives in [context](/versions/2.0.3dev/en/building-blocks/context) and disappears when the session ends. **Long-term memory** lets an agent retain durable facts — user preferences, prior decisions, accumulated knowledge — and recall them in later sessions.
+**Long-term memory** lets an agent store and retrieve durable information across sessions — user preferences, past decisions, and knowledge that should persist beyond a single conversation.
 
-In AgentScope, long-term memory is implemented as [middleware](/versions/2.0.3dev/en/building-blocks/middleware). Rather than bolting a memory store onto the agent class, a memory backend is a `MiddlewareBase` subclass that can hook into any position of the agent lifecycle as needed. For example:
+In AgentScope, long-term memory is implemented as [middleware](/versions/2.0.3dev/en/building-blocks/middleware). A **memory backend** is a middleware implementation that connects to a specific memory extraction and storage service (such as mem0) — for example, `Mem0Middleware`. Each backend is a `MiddlewareBase` subclass that can hook into any position of the agent lifecycle as needed. For example:
 
 - `on_reply` — search the store before a reply and write the new exchange back afterward.
 - `on_system_prompt` — advertise memory tools to the model.
@@ -29,7 +29,7 @@ AgentScope currently ships the following long-term memory backend, with more (e.
 
 ### Installation
 
-`Mem0Middleware` lives behind an optional extra:
+`Mem0Middleware`'s dependencies are available as an optional extra in AgentScope:
 
 ```bash
 pip install "agentscope[mem0]"
