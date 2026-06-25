@@ -343,6 +343,16 @@
      "vscode"
    ]
   },
+  "redirects": [
+    {
+      "source": "/latest/:slug*",
+      "destination": "/versions/2.0.3dev/:slug*"
+    },
+    {
+      "source": "/stable/:slug*",
+      "destination": "/versions/2.0.2/:slug*"
+    }
+  ],
   "footer": {
     "socials": {
       "x": "https://x.com/agentscope",
