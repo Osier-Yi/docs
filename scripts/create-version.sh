@@ -19,6 +19,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DOCS_ROOT="$(dirname "$SCRIPT_DIR")"
 VERSIONS_DIR="$DOCS_ROOT/versions"
+DOCS_JSON="$DOCS_ROOT/docs.json"
 
 # If source version not specified, find the latest version
 if [ -z "$SOURCE_VERSION" ]; then
@@ -56,13 +57,26 @@ find "$TARGET_DIR" -name "*.mdx" -exec sed -i '' "s|/versions/$SOURCE_VERSION/|/
 # Count modified files
 MODIFIED_COUNT=$(grep -r "/versions/$NEW_VERSION/" "$TARGET_DIR" --include="*.mdx" -l 2>/dev/null | wc -l | tr -d ' ')
 
+# Update redirects in docs.json
+echo "Updating redirects in docs.json..."
+if [[ "$NEW_VERSION" =~ dev$ ]]; then
+    # Pre-release version: update /latest/ alias
+    sed -i '' '/\/latest\/:slug\*/{ n; s|"destination": "/versions/[^"]*"|"destination": "/versions/'"$NEW_VERSION"'/:slug*"|; }' "$DOCS_JSON"
+    REDIRECT_UPDATED="/latest/ -> $NEW_VERSION"
+else
+    # Stable version: update /stable/ alias
+    sed -i '' '/\/stable\/:slug\*/{ n; s|"destination": "/versions/[^"]*"|"destination": "/versions/'"$NEW_VERSION"'/:slug*"|; }' "$DOCS_JSON"
+    REDIRECT_UPDATED="/stable/ -> $NEW_VERSION"
+fi
+
 echo ""
 echo "✅ Created version $NEW_VERSION"
 echo "   Source: $SOURCE_DIR"
 echo "   Target: $TARGET_DIR"
 echo "   Files with updated links: $MODIFIED_COUNT"
+echo "   Redirect updated: $REDIRECT_UPDATED"
 echo ""
 echo "Next steps:"
-echo "  1. Update docs.json to add the new version"
+echo "  1. Update docs.json to add the new version to navigation"
 echo "  2. Make your documentation changes in $TARGET_DIR"
 echo "  3. Run 'mint dev' to preview"
