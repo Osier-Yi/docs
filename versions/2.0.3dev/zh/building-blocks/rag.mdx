@@ -1,0 +1,418 @@
+---
+title: "RAG"
+description: "为智能体构建检索增强生成（RAG）能力。"
+---
+
+AgentScope 中 RAG 由如下四个**可独立替换**的功能模块组成
+
+| 功能模块 | 描述 |
+| ---- | ---- |
+| 解析器<br/>Parser | 把原始文件拆分成若干 `Section` 对象，每个 `Section` 对应文件的一个自然边界（PDF 页，PPTX页，Excel表） |
+| 切块器<br/>Chunker | 把 `Section` 切块切成最终入库的 `Chunk`  |
+| 嵌入模型<br/>Embedding Model | 把 `Chunk` 的文本或多模态内容嵌入为向量 |
+| 向量库<br/>Vector Store | 连接向量数据库，存储 `Chunk` 的向量和元信息，支持检索 |
+
+本章主要介绍在非服务化场景下使用 RAG 功能，包括添加文件到向量数据库，检索知识，以及如何与智能体集成。
+
+<Tip>
+嵌入模型的介绍和配置方式请见[嵌入模型章节](/versions/2.0.3dev/zh/building-blocks/model)；服务化版本的 RAG （带 HTTP 服务、分布式文件处理、托管功能）请见[RAG 服务](/versions/2.0.3dev/zh/deploy/rag)。
+</Tip>
+
+## 现有实现
+
+AgentScope 为四个模块提供了开箱即用的默认实现，全部基于基类继承，方便用户替换：
+
+### 解析器
+
+| 类        | 描述   | 支持文件类型                                                                                                        |
+|-----------|---|-------------------------------------------------------------------------------------------------------------|
+| `TextParser` | 文本数据解析器 | `text/plain`<br/>`text/markdown`<br/>`text/csv`<br/>`text/html`<br/>`application/json`<br/>`application/xml`<br/>`application/yaml` |
+| 开发中 ... |  | |
+
+
+### 切块器
+
+| 类 | 描述 |
+| --- | --- |
+| `ApproxTokenChunker` | 按近似 Token 数进行切分，不依赖任何 tokenizer。<br/>切分策略：`len(text.encode("utf-8")) // 4` |
+| 开发中 ... |  |
+
+### 嵌入模型
+
+请见[嵌入模型章节](/versions/2.0.3dev/zh/building-blocks/model)。
+
+### 向量数据库
+
+| 类 | 描述 |
+| --- | --- |
+| `QdrantStore` | 基于 Qdrant 的向量数据库实现，支持内存、本地磁盘、远程服务三种部署方式。 |
+| 开发中 ... |  |
+
+
+## RAG 使用
+
+### 添加文件
+
+添加文件需要经过文件解析、切块、嵌入、写入向量数据库四个步骤，对应上述四个模块，以下展示端到端的添加文件到向量数据库中。
+
+<Steps>
+  <Step title="解析文件">
+    使用解析器的 `parse` 方法把原始文件字节 / 字符串读取成 `Section` 数组，每个 `Section` 对应文件的一个自然边界（PDF 页 / PPT 页 / Excel 表…）。
+
+    <CodeGroup>
+
+    ```python 读取文本文件
+    from agentscope.rag import TextParser
+
+    parser = TextParser()
+    sections = await parser.parse(
+        file=b"# Cats\nCats sleep 12-16 hours per day.\n",
+        filename="cats.md",
+    )
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="切分 Chunk">
+    使用切块器实例的 `chunk` 方法把 `Section` 数组切成最终入库的 `Chunk` 数组。
+
+    <CodeGroup>
+
+    ```python 切分文本
+    from agentscope.rag import ApproxTokenChunker
+
+    chunker = ApproxTokenChunker(chunk_size=256, overlap=32)
+    chunks = await chunker.chunk(sections)
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="嵌入向量">
+    使用嵌入模型把 `Chunk` 数据批量嵌入成向量，再与 `Chunk` 一起打包成 `VectorRecord` 数组——同一文档的所有 chunk 共享一个 `document_id`，便于后续按文档级别整体删除。
+
+    <CodeGroup>
+
+    ```python DashScope 嵌入模型
+    import uuid
+
+    from agentscope.credential import DashScopeCredential
+    from agentscope.embedding import DashScopeEmbeddingModel
+    from agentscope.message import TextBlock
+    from agentscope.rag import VectorRecord
+
+    embedding_model = DashScopeEmbeddingModel(
+        credential=DashScopeCredential(api_key="YOUR_API_KEY"),
+        model="text-embedding-v4",
+        parameters=DashScopeEmbeddingModel.Parameters(),
+        dimensions=1024,
+    )
+
+    contents = [
+        chunk.content.text
+        if isinstance(chunk.content, TextBlock)
+        else chunk.content
+        for chunk in chunks
+    ]
+    response = await embedding_model(contents)
+
+    document_id = uuid.uuid4().hex
+    records = [
+        VectorRecord(vector=v, document_id=document_id, chunk=c)
+        for v, c in zip(response.embeddings, chunks)
+    ]
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="写入向量数据库">
+	使用向量数据库的 `create_collection` 方法创建 collection（如果已存在则跳过），然后调用 `insert` 方法将 `VectorRecord` 数组写入向量数据库。
+
+    <Note>
+    `create_collection` 的 `dimensions` 必须与嵌入模型的输出维度 **完全一致**，否则写入时会因向量维度不匹配而失败。
+    </Note>
+
+    <CodeGroup>
+
+    ```python Qdrant 数据库
+    from agentscope.rag import QdrantStore
+
+	# 改成 url="http://..." 指向真实集群
+    async with QdrantStore(location=":memory:"):
+        await store.create_collection("demo-kb", dimensions=1024)
+        await store.insert("demo-kb", records)
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+### 向量检索
+
+向量检索通过 `VectorStoreBase.search` 接口完成，需要先将查询语句编码成向量（维度必须与索引时一致），然后传入 collection 名称、查询向量、top_k 参数即可。返回结果是 `VectorSearchResult` 数组，包含命中 chunk、相似度分数等信息。
+
+```python
+async with store:
+    query = await embedding_model(["When do cats sleep?"])
+    results = await store.search(
+        collection="demo-kb",
+        query_vector=query.embeddings[0],
+        top_k=3,
+    )
+    for r in results:
+        print(r.score, r.chunk.content.text)
+```
+
+### 多模态支持
+
+AgentScope 的 RAG 原生支持多模态数据的入库与检索，关键在于解析器与嵌入模型能力的匹配——前者要能把多模态文件解析成 `DataBlock`，后者要能直接对 `DataBlock` 做嵌入：
+
+- **查看 Parser 支持的文件类型**：每个 `ParserBase` 子类通过类属性 `supported_media_types`（IANA 媒体类型列表）声明能力，可直接读取或在 IDE 中自动补全。
+
+  ```python
+  >>> TextParser.supported_media_types
+  ['text/plain', 'text/markdown', 'text/csv', 'text/html',
+   'application/json', 'application/xml', 'application/yaml']
+  ```
+
+- **查看嵌入模型支持的模态**：通过实例属性 `embedding_model.supports_multimodal` 判断模型是否能直接处理 `DataBlock`（图片 / 视频 / 音频）。
+
+  ```python
+  >>> embedding_model.supports_multimodal
+  True
+  ```
+
+当解析器输出带有多模态数据的 `Chunk`、且嵌入式模型的 `supports_multimodal == True` 时，入库与检索链路无需额外配置即可工作。
+
+### 集成到智能体
+
+通过 `RAGMiddleware` 把检索接入智能体类 `Agent` 的推理-行动循环。下面先给出常用参数，再说明工作模式。
+
+`RAGMiddleware` 构造参数中常用的几个：
+
+| 参数 | 默认值 | 描述 |
+|------|--------|------|
+| `embedding_model` | 必填 | 用于嵌入查询的 `EmbeddingModelBase` 实例。**必须与索引时使用同一模型**——向量维度和语义都要一致 |
+| `vector_store` | 必填 | 指向已经索引好的 `VectorStoreBase` 实例 |
+| `collections` | 必填 | 要检索的 collection 列表，一个智能体可挂多个知识库 |
+| `mode` | `"hint"` | 集成模式，详见下表 |
+| `top_k` | `5` | 单次检索返回的最大命中数，跨所有 collection 与 query 输入去重后截断 |
+| `score_threshold` | `None` | 命中相似度下限，仅在 cosine / dot-product 下有意义 |
+| `persist_hint` | `False` | `hint` 模式下注入块是否持久留在上下文 |
+| `emit_hint_event` | `False` | `hint` 模式下是否额外发出 `HintBlockEvent` 供前端展示命中片段 |
+
+此外，`RAGMiddleware.list_tools()` 会返回一个 `retrieve_knowledge` 工具——`"agentic"` 模式下需要手动把它注册到智能体的 `Toolkit` 里，模型才能调用。
+
+`RAGMiddleware` 支持两种工作模式，可以单独使用，也可以**叠加使用**（同时挂两个不同 `mode` 的实例）：
+
+| 模式 | 触发时机 | 检索关键词 | 注入方式 |
+|------|---------|-----------|---------|
+| `"hint"` | 每次 reply 的**首次推理**前 | reply 方法的输入消息作为检索关键词 | 检索结果被包装成 `HintBlock` 并注入到上下文中 |
+| `"agentic"` | 模型自主调用检索工具 | 模型自主给出 | 暴露 `retrieve_knowledge` 工具，由智能体自己判断何时检索、用什么 query |
+
+通过如下代码给智能体实例配置 RAG 功能：
+
+<CodeGroup>
+
+```python hint 模式
+from agentscope.middleware import RAGMiddleware
+from agentscope.tool import Toolkit
+
+hint_mw = RAGMiddleware(
+    embedding_model=embedding_model,
+    vector_store=store,
+    collections=["demo-kb"],
+    mode="hint",
+    top_k=3,
+)
+
+agent = Agent(
+    name="hint-agent",
+    system_prompt="使用检索到的资料回答用户问题。",
+    model=chat_model,
+    toolkit=Toolkit(),
+    middlewares=[hint_mw],
+)
+```
+
+```python agentic 模式
+from agentscope.middleware import RAGMiddleware
+from agentscope.tool import Toolkit
+
+agentic_mw = RAGMiddleware(
+    embedding_model=embedding_model,
+    vector_store=store,
+    collections=["demo-kb"],
+    mode="agentic",
+    top_k=3,
+)
+
+# 注意：agentic 模式下需要手动把 retrieve_knowledge 工具注入到 Toolkit
+toolkit = Toolkit(tools=await agentic_mw.list_tools())
+
+agent = Agent(
+    name="agentic-agent",
+    system_prompt="必要时调用 retrieve_knowledge 工具查询资料。",
+    model=chat_model,
+    toolkit=toolkit,
+    middlewares=[agentic_mw],
+)
+```
+
+```python 两种模式组合
+from agentscope.middleware import RAGMiddleware
+from agentscope.tool import Toolkit
+
+# hint 自动给首轮一个背景；agentic 让模型在需要时再补检索
+hint_mw = RAGMiddleware(
+    embedding_model=embedding_model,
+    vector_store=store,
+    collections=["demo-kb"],
+    mode="hint",
+    top_k=3,
+)
+agentic_mw = RAGMiddleware(
+    embedding_model=embedding_model,
+    vector_store=store,
+    collections=["demo-kb"],
+    mode="agentic",
+    top_k=3,
+)
+
+# 注意：agentic 模式下需要手动把 retrieve_knowledge 工具注入到 Toolkit
+toolkit = Toolkit(tools=await agentic_mw.list_tools())
+
+agent = Agent(
+    name="hybrid-agent",
+    system_prompt="使用检索资料回答；必要时主动调用 retrieve_knowledge 补充。",
+    model=chat_model,
+    toolkit=toolkit,
+    middlewares=[hint_mw, agentic_mw],
+)
+```
+
+</CodeGroup>
+
+## 自定义拓展
+
+RAG 的所有模块都采用基类继承的方式，用户可以自定义 Parser、Chunker、Embedding Model、Vector Store——只要继承对应基类、实现核心方法，就能被无缝接入上面的流水线。
+
+<Tip>
+	欢迎贡献新的 Parser、Chunker、Vector Store 到 AgentScope 官方仓库！
+</Tip>
+
+### 自定义解析器
+
+继承 `ParserBase`，在类属性 `supported_media_types` 中声明能处理的 IANA 媒体类型，并实现 `async def parse(file, filename)` 把字节流拆成若干 `Section`：
+
+```python
+from agentscope.message import TextBlock
+from agentscope.rag import ParserBase, Section
+
+
+class MyMarkdownParser(ParserBase):
+    supported_media_types = ["text/markdown"]
+
+    async def parse(
+        self,
+        file: bytes | str,
+        filename: str,
+    ) -> list[Section]:
+        text = file.decode("utf-8") if isinstance(file, bytes) else file
+        # 按二级标题切成若干 Section，保留来源
+        return [
+            Section(
+                content=TextBlock(text=block),
+                source=filename,
+                metadata={"index": index},
+            )
+            for index, block in enumerate(text.split("\n## "))
+        ]
+```
+
+### 自定义切块器
+
+继承 `ChunkerBase`，实现 `async def chunk(sections)` 把若干 `Section` 切成入库的 `Chunk`。约定：不跨 `Section` 合并、多模态 `DataBlock` 整块透传、`chunk_index` 在结果内从 0 连续编号：
+
+```python
+from agentscope.message import TextBlock
+from agentscope.rag import Chunk, ChunkerBase, Section
+
+
+class FixedCharChunker(ChunkerBase):
+    def __init__(self, chunk_size: int = 1000) -> None:
+        self._chunk_size = chunk_size
+
+    async def chunk(self, sections: list[Section]) -> list[Chunk]:
+        chunks: list[Chunk] = []
+        for section in sections:
+            # 多模态内容不切分，整块透传
+            if not isinstance(section.content, TextBlock):
+                chunks.append(
+                    Chunk(content=section.content, source=section.source),
+                )
+                continue
+            text = section.content.text
+            for start in range(0, len(text), self._chunk_size):
+                chunks.append(
+                    Chunk(
+                        content=TextBlock(
+                            text=text[start : start + self._chunk_size],
+                        ),
+                        source=section.source,
+                    ),
+                )
+        return chunks
+```
+
+### 自定义向量数据库
+
+继承 `VectorStoreBase`，实现 `create_collection`、`insert`、`search`、`delete` 等核心方法，并通过 `__aenter__` / `__aexit__` 管理底层连接的生命周期：
+
+```python
+from agentscope.rag import VectorRecord, VectorSearchResult, VectorStoreBase
+
+
+class MyVectorStore(VectorStoreBase):
+    async def __aenter__(self) -> "MyVectorStore":
+        self._client = await connect_my_backend(...)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self._client.close()
+
+    async def create_collection(
+        self,
+        collection: str,
+        dimensions: int,
+    ) -> None: ...
+
+    async def insert(
+        self,
+        collection: str,
+        records: list[VectorRecord],
+    ) -> None: ...
+
+    async def search(
+        self,
+        collection: str,
+        query_vector: list[float],
+        top_k: int,
+    ) -> list[VectorSearchResult]: ...
+
+    async def delete(self, collection: str, document_id: str) -> None: ...
+```
+
+
+## 延伸阅读
+
+<CardGroup cols={1}>
+  <Card title="RAG 服务" icon="server" href="/versions/2.0.3dev/zh/deploy/rag" cta="查看部署文档" arrow>
+    多租户、分布式的 RAG 服务，支持 HTTP API、文件托管、向量数据库托管。
+  </Card>
+  <Card title="中间件" icon="layer-group" href="/versions/2.0.3dev/zh/building-blocks/middleware" cta="了解中间件机制" arrow>
+    了解 `RAGMiddleware` 是如何嵌入 reply / reasoning 钩子的。
+  </Card>
+  <Card title="嵌入模型" icon="cube" href="/versions/2.0.3dev/zh/building-blocks/model" cta="查看模型列表" arrow>
+    可用的嵌入模型及其参数。
+  </Card>
+</CardGroup>

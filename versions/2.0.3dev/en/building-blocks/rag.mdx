@@ -1,0 +1,419 @@
+---
+title: "RAG"
+description: "Build retrieval-augmented generation (RAG) capabilities for agents."
+---
+
+In AgentScope, RAG is composed of the following four **independently replaceable** modules:
+
+| Module | Description |
+| ---- | ---- |
+| Parser | Splits a raw file into a list of `Section` objects, where each `Section` corresponds to a natural boundary in the file (PDF page, PPTX slide, Excel sheet) |
+| Chunker | Cuts `Section`s into the final `Chunk`s to be indexed |
+| Embedding Model | Embeds a `Chunk`'s text or multimodal content into a vector |
+| Vector Store | Connects to a vector database, stores `Chunk` vectors with metadata, and supports retrieval |
+
+This chapter focuses on using RAG in non-service scenarios, including adding files to a vector database, retrieving knowledge, and integrating with an agent.
+
+<Tip>
+For embedding models and how to configure them, see the [Embedding Model chapter](/versions/2.0.3dev/en/building-blocks/model); for the service version of RAG (with HTTP service, distributed file processing, and managed hosting), see [RAG Service](/versions/2.0.3dev/en/deploy/rag).
+</Tip>
+
+## Existing Implementations
+
+AgentScope ships out-of-the-box default implementations for all four modules, all inheriting from base classes so users can easily swap them out:
+
+### Parser
+
+| Class | Description | Supported File Types |
+|-----------|---|-------------------------------------------------------------------------------------------------------------|
+| `TextParser` | Text data parser | `text/plain`<br/>`text/markdown`<br/>`text/csv`<br/>`text/html`<br/>`application/json`<br/>`application/xml`<br/>`application/yaml` |
+| In development ... |  | |
+
+
+### Chunker
+
+| Class | Description |
+| --- | --- |
+| `ApproxTokenChunker` | Splits text by approximate token count, without depending on any tokenizer.<br/>Splitting strategy: `len(text.encode("utf-8")) // 4` |
+| In development ... |  |
+
+### Embedding Model
+
+See the [Embedding Model chapter](/versions/2.0.3dev/en/building-blocks/model).
+
+### Vector Database
+
+| Class | Description |
+| --- | --- |
+| `QdrantStore` | A Qdrant-based vector database implementation, supporting in-memory, on-disk, and remote service deployments. |
+| In development ... |  |
+
+
+## Using RAG
+
+### Adding Files
+
+Adding a file goes through four steps — file parsing, chunking, embedding, and writing to the vector database — one per module. The following walks through an end-to-end example of adding a file to a vector database.
+
+<Steps>
+  <Step title="Parse the file">
+    Call the parser's `parse` method to turn the raw file bytes / string into a list of `Section`s, where each `Section` corresponds to a natural boundary in the file (PDF page / PPT slide / Excel sheet ...).
+
+    <CodeGroup>
+
+    ```python Read text file
+    from agentscope.rag import TextParser
+
+    parser = TextParser()
+    sections = await parser.parse(
+        file=b"# Cats\nCats sleep 12-16 hours per day.\n",
+        filename="cats.md",
+    )
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="Split into Chunks">
+    Call the chunker instance's `chunk` method to cut the `Section` list into the final list of `Chunk`s to be indexed.
+
+    <CodeGroup>
+
+    ```python Chunk text
+    from agentscope.rag import ApproxTokenChunker
+
+    chunker = ApproxTokenChunker(chunk_size=256, overlap=32)
+    chunks = await chunker.chunk(sections)
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="Embed into vectors">
+    Use the embedding model to batch-embed the `Chunk`s into vectors, and pack them together with the `Chunk`s into a list of `VectorRecord`s — all chunks of the same document share a single `document_id`, which makes it easy to delete a whole document later.
+
+    <CodeGroup>
+
+    ```python DashScope embedding model
+    import uuid
+
+    from agentscope.credential import DashScopeCredential
+    from agentscope.embedding import DashScopeEmbeddingModel
+    from agentscope.message import TextBlock
+    from agentscope.rag import VectorRecord
+
+    embedding_model = DashScopeEmbeddingModel(
+        credential=DashScopeCredential(api_key="YOUR_API_KEY"),
+        model="text-embedding-v4",
+        parameters=DashScopeEmbeddingModel.Parameters(),
+        dimensions=1024,
+    )
+
+    contents = [
+        chunk.content.text
+        if isinstance(chunk.content, TextBlock)
+        else chunk.content
+        for chunk in chunks
+    ]
+    response = await embedding_model(contents)
+
+    document_id = uuid.uuid4().hex
+    records = [
+        VectorRecord(vector=v, document_id=document_id, chunk=c)
+        for v, c in zip(response.embeddings, chunks)
+    ]
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="Write to the vector database">
+    Call the vector store's `create_collection` method to create the collection (skipped if it already exists), then call `insert` to write the `VectorRecord` list into the vector database.
+
+    <Note>
+    The `dimensions` passed to `create_collection` **must exactly match** the embedding model's output dimensions — otherwise the insert will fail due to a vector dimension mismatch.
+    </Note>
+
+    <CodeGroup>
+
+    ```python Qdrant database
+    from agentscope.rag import QdrantStore
+
+    # Change to url="http://..." to point to a real cluster
+    async with QdrantStore(location=":memory:"):
+        await store.create_collection("demo-kb", dimensions=1024)
+        await store.insert("demo-kb", records)
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+### Vector Retrieval
+
+Vector retrieval is performed through the `VectorStoreBase.search` interface: encode the query into a vector (the dimensions must match those used at index time), then pass in the collection name, query vector, and `top_k`. The result is a list of `VectorSearchResult`s, each containing the hit chunk, similarity score, and other metadata.
+
+```python
+async with store:
+    query = await embedding_model(["When do cats sleep?"])
+    results = await store.search(
+        collection="demo-kb",
+        query_vector=query.embeddings[0],
+        top_k=3,
+    )
+    for r in results:
+        print(r.score, r.chunk.content.text)
+```
+
+### Multimodal Support
+
+AgentScope's RAG natively supports the ingestion and retrieval of multimodal data — the key is matching the parser and embedding model capabilities: the former must be able to parse multimodal files into `DataBlock`s, and the latter must be able to embed `DataBlock`s directly:
+
+- **Check which file types a Parser supports**: every `ParserBase` subclass declares its capability via the class attribute `supported_media_types` (a list of IANA media types), which you can read directly or auto-complete in your IDE.
+
+  ```python
+  >>> TextParser.supported_media_types
+  ['text/plain', 'text/markdown', 'text/csv', 'text/html',
+   'application/json', 'application/xml', 'application/yaml']
+  ```
+
+- **Check which modalities an embedding model supports**: use the instance attribute `embedding_model.supports_multimodal` to tell whether the model can directly handle `DataBlock`s (images / videos / audio).
+
+  ```python
+  >>> embedding_model.supports_multimodal
+  True
+  ```
+
+When the parser outputs `Chunk`s with multimodal data and the embedding model's `supports_multimodal == True`, the ingestion and retrieval pipelines work out of the box with no extra configuration.
+
+### Integrating with an Agent
+
+`RAGMiddleware` plugs retrieval into the `Agent` class's reasoning-acting loop. The common parameters are introduced first, followed by an explanation of the working modes.
+
+The commonly used constructor parameters of `RAGMiddleware`:
+
+| Parameter | Default | Description |
+|------|--------|------|
+| `embedding_model` | required | An `EmbeddingModelBase` instance used to embed the query. **Must be the same model used at index time** — both the vector dimensions and the semantics need to match |
+| `vector_store` | required | A `VectorStoreBase` instance pointing to an already-indexed store |
+| `collections` | required | The list of collections to search; a single agent can attach multiple knowledge bases |
+| `mode` | `"hint"` | Integration mode — see the table below |
+| `top_k` | `5` | Maximum number of hits returned in a single retrieval, deduplicated across collections and query inputs before truncation |
+| `score_threshold` | `None` | Minimum similarity threshold; only meaningful under cosine / dot-product |
+| `persist_hint` | `False` | In `hint` mode, whether the injected block stays persistently in the context |
+| `emit_hint_event` | `False` | In `hint` mode, whether to additionally emit a `HintBlockEvent` so the frontend can display the hit snippets |
+
+In addition, `RAGMiddleware.list_tools()` returns a single `retrieve_knowledge` tool — in `"agentic"` mode you need to manually register it into the agent's `Toolkit` so the model can call it.
+
+`RAGMiddleware` supports two working modes, which can be used individually or **combined** (by attaching two instances with different `mode`s):
+
+| Mode | Trigger | Retrieval Query | Injection |
+|------|---------|-----------------|-----------|
+| `"hint"` | Before the **first reasoning** of each reply | The input message of the reply method is used as the retrieval query | Retrieval results are wrapped into a `HintBlock` and injected into the context |
+| `"agentic"` | The model invokes the retrieval tool on its own | Decided by the model itself | Exposes a `retrieve_knowledge` tool — the agent itself decides when to retrieve and what query to use |
+
+Configure RAG on an agent instance with the following code:
+
+<CodeGroup>
+
+```python hint mode
+from agentscope.middleware import RAGMiddleware
+from agentscope.tool import Toolkit
+
+hint_mw = RAGMiddleware(
+    embedding_model=embedding_model,
+    vector_store=store,
+    collections=["demo-kb"],
+    mode="hint",
+    top_k=3,
+)
+
+agent = Agent(
+    name="hint-agent",
+    system_prompt="Answer the user's question using the retrieved material.",
+    model=chat_model,
+    toolkit=Toolkit(),
+    middlewares=[hint_mw],
+)
+```
+
+```python agentic mode
+from agentscope.middleware import RAGMiddleware
+from agentscope.tool import Toolkit
+
+agentic_mw = RAGMiddleware(
+    embedding_model=embedding_model,
+    vector_store=store,
+    collections=["demo-kb"],
+    mode="agentic",
+    top_k=3,
+)
+
+# Note: in agentic mode you must manually inject the retrieve_knowledge tool into the Toolkit
+toolkit = Toolkit(tools=await agentic_mw.list_tools())
+
+agent = Agent(
+    name="agentic-agent",
+    system_prompt="When necessary, call the retrieve_knowledge tool to look up material.",
+    model=chat_model,
+    toolkit=toolkit,
+    middlewares=[agentic_mw],
+)
+```
+
+```python combined modes
+from agentscope.middleware import RAGMiddleware
+from agentscope.tool import Toolkit
+
+# hint gives the first turn some background automatically;
+# agentic lets the model fetch more on demand
+hint_mw = RAGMiddleware(
+    embedding_model=embedding_model,
+    vector_store=store,
+    collections=["demo-kb"],
+    mode="hint",
+    top_k=3,
+)
+agentic_mw = RAGMiddleware(
+    embedding_model=embedding_model,
+    vector_store=store,
+    collections=["demo-kb"],
+    mode="agentic",
+    top_k=3,
+)
+
+# Note: in agentic mode you must manually inject the retrieve_knowledge tool into the Toolkit
+toolkit = Toolkit(tools=await agentic_mw.list_tools())
+
+agent = Agent(
+    name="hybrid-agent",
+    system_prompt="Answer using the retrieved material; call retrieve_knowledge for more when needed.",
+    model=chat_model,
+    toolkit=toolkit,
+    middlewares=[hint_mw, agentic_mw],
+)
+```
+
+</CodeGroup>
+
+## Custom Extensions
+
+All RAG modules use base-class inheritance, so users can customize Parser, Chunker, Embedding Model, and Vector Store — as long as a custom class inherits from the corresponding base class and implements its core methods, it slots seamlessly into the pipeline above.
+
+<Tip>
+    Contributions of new Parsers, Chunkers, and Vector Stores to the official AgentScope repository are welcome!
+</Tip>
+
+### Custom Parser
+
+Inherit from `ParserBase`, declare the IANA media types you can handle in the class attribute `supported_media_types`, and implement `async def parse(file, filename)` to split a byte stream into a list of `Section`s:
+
+```python
+from agentscope.message import TextBlock
+from agentscope.rag import ParserBase, Section
+
+
+class MyMarkdownParser(ParserBase):
+    supported_media_types = ["text/markdown"]
+
+    async def parse(
+        self,
+        file: bytes | str,
+        filename: str,
+    ) -> list[Section]:
+        text = file.decode("utf-8") if isinstance(file, bytes) else file
+        # Split by H2 headings into multiple Sections, preserving the source
+        return [
+            Section(
+                content=TextBlock(text=block),
+                source=filename,
+                metadata={"index": index},
+            )
+            for index, block in enumerate(text.split("\n## "))
+        ]
+```
+
+### Custom Chunker
+
+Inherit from `ChunkerBase` and implement `async def chunk(sections)` to turn a list of `Section`s into the `Chunk`s to be indexed. Conventions: never merge across `Section`s, pass multimodal `DataBlock`s through as whole chunks, and number `chunk_index` consecutively from 0 across the result list:
+
+```python
+from agentscope.message import TextBlock
+from agentscope.rag import Chunk, ChunkerBase, Section
+
+
+class FixedCharChunker(ChunkerBase):
+    def __init__(self, chunk_size: int = 1000) -> None:
+        self._chunk_size = chunk_size
+
+    async def chunk(self, sections: list[Section]) -> list[Chunk]:
+        chunks: list[Chunk] = []
+        for section in sections:
+            # Multimodal content is not split — pass through as a whole chunk
+            if not isinstance(section.content, TextBlock):
+                chunks.append(
+                    Chunk(content=section.content, source=section.source),
+                )
+                continue
+            text = section.content.text
+            for start in range(0, len(text), self._chunk_size):
+                chunks.append(
+                    Chunk(
+                        content=TextBlock(
+                            text=text[start : start + self._chunk_size],
+                        ),
+                        source=section.source,
+                    ),
+                )
+        return chunks
+```
+
+### Custom Vector Database
+
+Inherit from `VectorStoreBase`, implement the core methods `create_collection`, `insert`, `search`, `delete`, and manage the underlying connection lifecycle through `__aenter__` / `__aexit__`:
+
+```python
+from agentscope.rag import VectorRecord, VectorSearchResult, VectorStoreBase
+
+
+class MyVectorStore(VectorStoreBase):
+    async def __aenter__(self) -> "MyVectorStore":
+        self._client = await connect_my_backend(...)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self._client.close()
+
+    async def create_collection(
+        self,
+        collection: str,
+        dimensions: int,
+    ) -> None: ...
+
+    async def insert(
+        self,
+        collection: str,
+        records: list[VectorRecord],
+    ) -> None: ...
+
+    async def search(
+        self,
+        collection: str,
+        query_vector: list[float],
+        top_k: int,
+    ) -> list[VectorSearchResult]: ...
+
+    async def delete(self, collection: str, document_id: str) -> None: ...
+```
+
+
+## Further Reading
+
+<CardGroup cols={1}>
+  <Card title="RAG Service" icon="server" href="/versions/2.0.3dev/en/deploy/rag" cta="View deployment docs" arrow>
+    A multi-tenant, distributed RAG service with HTTP API, file hosting, and managed vector databases.
+  </Card>
+  <Card title="Middleware" icon="layer-group" href="/versions/2.0.3dev/en/building-blocks/middleware" cta="Learn the middleware mechanism" arrow>
+    See how `RAGMiddleware` plugs into the reply / reasoning hooks.
+  </Card>
+  <Card title="Embedding Model" icon="cube" href="/versions/2.0.3dev/en/building-blocks/model" cta="View model list" arrow>
+    Available embedding models and their parameters.
+  </Card>
+</CardGroup>

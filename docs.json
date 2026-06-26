@@ -87,6 +87,7 @@
                       "versions/2.0.3dev/en/building-blocks/plan",
                       "versions/2.0.3dev/en/building-blocks/permission-system",
                       "versions/2.0.3dev/en/building-blocks/middleware",
+                      "versions/2.0.3dev/en/building-blocks/rag",
                       "versions/2.0.3dev/en/building-blocks/long-term-memory",
                       "versions/2.0.3dev/en/building-blocks/workspace"
                     ]
@@ -96,6 +97,7 @@
                     "pages": [
                       "versions/2.0.3dev/en/deploy/agent-service",
                       "versions/2.0.3dev/en/deploy/agent-team",
+                      "versions/2.0.3dev/en/deploy/rag",
                       {
                         "group": "API",
                         "openapi": "versions/2.0.3dev/en/deploy/openapi.json"
@@ -282,15 +284,17 @@
                       "versions/2.0.3dev/zh/building-blocks/plan",
                       "versions/2.0.3dev/zh/building-blocks/permission-system",
                       "versions/2.0.3dev/zh/building-blocks/middleware",
+                      "versions/2.0.3dev/zh/building-blocks/rag",
                       "versions/2.0.3dev/zh/building-blocks/long-term-memory",
                       "versions/2.0.3dev/zh/building-blocks/workspace"
                     ]
                   },
                   {
-                    "group": "Agent 即服务",
+                    "group": "智能体即服务",
                     "pages": [
                       "versions/2.0.3dev/zh/deploy/agent-service",
                       "versions/2.0.3dev/zh/deploy/agent-team",
+                      "versions/2.0.3dev/zh/deploy/rag",
                       {
                         "group": "API",
                         "openapi": "versions/2.0.3dev/en/deploy/openapi.json"
