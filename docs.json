@@ -15,6 +15,112 @@
         "default": true,
         "versions": [
           {
+            "version": "2.0.3",
+            "tabs": [
+              {
+                "tab": "Guides",
+                "groups": [
+                  {
+                    "group": "Get Started",
+                    "pages": [
+                      "versions/2.0.3/en/index",
+                      "versions/2.0.3/en/quickstart",
+                      "versions/2.0.3/en/release-notes"
+                    ]
+                  },
+                  {
+                    "group": "Building Blocks",
+                    "pages": [
+                      "versions/2.0.3/en/building-blocks/message-and-event",
+                      "versions/2.0.3/en/building-blocks/agent",
+                      "versions/2.0.3/en/building-blocks/model",
+                      "versions/2.0.3/en/building-blocks/context",
+                      "versions/2.0.3/en/building-blocks/tool",
+                      "versions/2.0.3/en/building-blocks/plan",
+                      "versions/2.0.3/en/building-blocks/permission-system",
+                      "versions/2.0.3/en/building-blocks/middleware",
+                      "versions/2.0.3/en/building-blocks/rag",
+                      "versions/2.0.3/en/building-blocks/long-term-memory",
+                      "versions/2.0.3/en/building-blocks/workspace"
+                    ]
+                  },
+                  {
+                    "group": "Agent as Service",
+                    "pages": [
+                      "versions/2.0.3/en/deploy/agent-service",
+                      "versions/2.0.3/en/deploy/agent-team",
+                      "versions/2.0.3/en/deploy/rag",
+                      {
+                        "group": "API",
+                        "openapi": "versions/2.0.3/en/deploy/openapi.json"
+                      }
+                    ]
+                  },
+                  {
+                    "group": "Others",
+                    "pages": [
+                      "versions/2.0.3/en/others/faq",
+                      "versions/2.0.3/en/others/change-log"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "version": "2.0.4dev",
+            "tabs": [
+              {
+                "tab": "Guides",
+                "groups": [
+                  {
+                    "group": "Get Started",
+                    "pages": [
+                      "versions/2.0.4dev/en/index",
+                      "versions/2.0.4dev/en/quickstart",
+                      "versions/2.0.4dev/en/release-notes"
+                    ]
+                  },
+                  {
+                    "group": "Building Blocks",
+                    "pages": [
+                      "versions/2.0.4dev/en/building-blocks/message-and-event",
+                      "versions/2.0.4dev/en/building-blocks/agent",
+                      "versions/2.0.4dev/en/building-blocks/model",
+                      "versions/2.0.4dev/en/building-blocks/context",
+                      "versions/2.0.4dev/en/building-blocks/tool",
+                      "versions/2.0.4dev/en/building-blocks/plan",
+                      "versions/2.0.4dev/en/building-blocks/permission-system",
+                      "versions/2.0.4dev/en/building-blocks/middleware",
+                      "versions/2.0.4dev/en/building-blocks/rag",
+                      "versions/2.0.4dev/en/building-blocks/long-term-memory",
+                      "versions/2.0.4dev/en/building-blocks/workspace"
+                    ]
+                  },
+                  {
+                    "group": "Agent as Service",
+                    "pages": [
+                      "versions/2.0.4dev/en/deploy/agent-service",
+                      "versions/2.0.4dev/en/deploy/agent-team",
+                      "versions/2.0.4dev/en/deploy/rag",
+                      {
+                        "group": "API",
+                        "openapi": "versions/2.0.4dev/en/deploy/openapi.json"
+                      }
+                    ]
+                  },
+                  {
+                    "group": "Others",
+                    "pages": [
+                      "versions/2.0.4dev/en/others/faq",
+                      "versions/2.0.4dev/en/others/change-log"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "version": "2.0.2",
             "tabs": [
               {
@@ -56,59 +162,6 @@
                     "group": "Others",
                     "pages": [
                       "versions/2.0.2/en/others/faq"
-                    ]
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "version": "2.0.3dev",
-            "tabs": [
-              {
-                "tab": "Guides",
-                "groups": [
-                  {
-                    "group": "Get Started",
-                    "pages": [
-                      "versions/2.0.3dev/en/index",
-                      "versions/2.0.3dev/en/quickstart",
-                      "versions/2.0.3dev/en/release-notes"
-                    ]
-                  },
-                  {
-                    "group": "Building Blocks",
-                    "pages": [
-                      "versions/2.0.3dev/en/building-blocks/message-and-event",
-                      "versions/2.0.3dev/en/building-blocks/agent",
-                      "versions/2.0.3dev/en/building-blocks/model",
-                      "versions/2.0.3dev/en/building-blocks/context",
-                      "versions/2.0.3dev/en/building-blocks/tool",
-                      "versions/2.0.3dev/en/building-blocks/plan",
-                      "versions/2.0.3dev/en/building-blocks/permission-system",
-                      "versions/2.0.3dev/en/building-blocks/middleware",
-                      "versions/2.0.3dev/en/building-blocks/rag",
-                      "versions/2.0.3dev/en/building-blocks/long-term-memory",
-                      "versions/2.0.3dev/en/building-blocks/workspace"
-                    ]
-                  },
-                  {
-                    "group": "Agent as Service",
-                    "pages": [
-                      "versions/2.0.3dev/en/deploy/agent-service",
-                      "versions/2.0.3dev/en/deploy/agent-team",
-                      "versions/2.0.3dev/en/deploy/rag",
-                      {
-                        "group": "API",
-                        "openapi": "versions/2.0.3dev/en/deploy/openapi.json"
-                      }
-                    ]
-                  },
-                  {
-                    "group": "Others",
-                    "pages": [
-                      "versions/2.0.3dev/en/others/faq",
-                      "versions/2.0.3dev/en/others/change-log"
                     ]
                   }
                 ]
@@ -212,6 +265,112 @@
         "language": "zh",
         "versions": [
           {
+            "version": "2.0.3",
+            "tabs": [
+              {
+                "tab": "指南",
+                "groups": [
+                  {
+                    "group": "快速开始",
+                    "pages": [
+                      "versions/2.0.3/zh/index",
+                      "versions/2.0.3/zh/quickstart",
+                      "versions/2.0.3/zh/release-notes"
+                    ]
+                  },
+                  {
+                    "group": "核心模块",
+                    "pages": [
+                      "versions/2.0.3/zh/building-blocks/message-and-event",
+                      "versions/2.0.3/zh/building-blocks/agent",
+                      "versions/2.0.3/zh/building-blocks/model",
+                      "versions/2.0.3/zh/building-blocks/context",
+                      "versions/2.0.3/zh/building-blocks/tool",
+                      "versions/2.0.3/zh/building-blocks/plan",
+                      "versions/2.0.3/zh/building-blocks/permission-system",
+                      "versions/2.0.3/zh/building-blocks/middleware",
+                      "versions/2.0.3/zh/building-blocks/rag",
+                      "versions/2.0.3/zh/building-blocks/long-term-memory",
+                      "versions/2.0.3/zh/building-blocks/workspace"
+                    ]
+                  },
+                  {
+                    "group": "智能体即服务",
+                    "pages": [
+                      "versions/2.0.3/zh/deploy/agent-service",
+                      "versions/2.0.3/zh/deploy/agent-team",
+                      "versions/2.0.3/zh/deploy/rag",
+                      {
+                        "group": "API",
+                        "openapi": "versions/2.0.3/en/deploy/openapi.json"
+                      }
+                    ]
+                  },
+                  {
+                    "group": "其他",
+                    "pages": [
+                      "versions/2.0.3/zh/others/faq",
+                      "versions/2.0.3/zh/others/change-log"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "version": "2.0.4dev",
+            "tabs": [
+              {
+                "tab": "指南",
+                "groups": [
+                  {
+                    "group": "快速开始",
+                    "pages": [
+                      "versions/2.0.4dev/zh/index",
+                      "versions/2.0.4dev/zh/quickstart",
+                      "versions/2.0.4dev/zh/release-notes"
+                    ]
+                  },
+                  {
+                    "group": "核心模块",
+                    "pages": [
+                      "versions/2.0.4dev/zh/building-blocks/message-and-event",
+                      "versions/2.0.4dev/zh/building-blocks/agent",
+                      "versions/2.0.4dev/zh/building-blocks/model",
+                      "versions/2.0.4dev/zh/building-blocks/context",
+                      "versions/2.0.4dev/zh/building-blocks/tool",
+                      "versions/2.0.4dev/zh/building-blocks/plan",
+                      "versions/2.0.4dev/zh/building-blocks/permission-system",
+                      "versions/2.0.4dev/zh/building-blocks/middleware",
+                      "versions/2.0.4dev/zh/building-blocks/rag",
+                      "versions/2.0.4dev/zh/building-blocks/long-term-memory",
+                      "versions/2.0.4dev/zh/building-blocks/workspace"
+                    ]
+                  },
+                  {
+                    "group": "智能体即服务",
+                    "pages": [
+                      "versions/2.0.4dev/zh/deploy/agent-service",
+                      "versions/2.0.4dev/zh/deploy/agent-team",
+                      "versions/2.0.4dev/zh/deploy/rag",
+                      {
+                        "group": "API",
+                        "openapi": "versions/2.0.4dev/en/deploy/openapi.json"
+                      }
+                    ]
+                  },
+                  {
+                    "group": "其他",
+                    "pages": [
+                      "versions/2.0.4dev/zh/others/faq",
+                      "versions/2.0.4dev/zh/others/change-log"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "version": "2.0.2",
             "tabs": [
               {
@@ -258,59 +417,6 @@
                 ]
               }
             ]
-          },
-          {
-            "version": "2.0.3dev",
-            "tabs": [
-              {
-                "tab": "指南",
-                "groups": [
-                  {
-                    "group": "快速开始",
-                    "pages": [
-                      "versions/2.0.3dev/zh/index",
-                      "versions/2.0.3dev/zh/quickstart",
-                      "versions/2.0.3dev/zh/release-notes"
-                    ]
-                  },
-                  {
-                    "group": "核心模块",
-                    "pages": [
-                      "versions/2.0.3dev/zh/building-blocks/message-and-event",
-                      "versions/2.0.3dev/zh/building-blocks/agent",
-                      "versions/2.0.3dev/zh/building-blocks/model",
-                      "versions/2.0.3dev/zh/building-blocks/context",
-                      "versions/2.0.3dev/zh/building-blocks/tool",
-                      "versions/2.0.3dev/zh/building-blocks/plan",
-                      "versions/2.0.3dev/zh/building-blocks/permission-system",
-                      "versions/2.0.3dev/zh/building-blocks/middleware",
-                      "versions/2.0.3dev/zh/building-blocks/rag",
-                      "versions/2.0.3dev/zh/building-blocks/long-term-memory",
-                      "versions/2.0.3dev/zh/building-blocks/workspace"
-                    ]
-                  },
-                  {
-                    "group": "智能体即服务",
-                    "pages": [
-                      "versions/2.0.3dev/zh/deploy/agent-service",
-                      "versions/2.0.3dev/zh/deploy/agent-team",
-                      "versions/2.0.3dev/zh/deploy/rag",
-                      {
-                        "group": "API",
-                        "openapi": "versions/2.0.3dev/en/deploy/openapi.json"
-                      }
-                    ]
-                  },
-                  {
-                    "group": "其他",
-                    "pages": [
-                      "versions/2.0.3dev/zh/others/faq",
-                      "versions/2.0.3dev/zh/others/change-log"
-                    ]
-                  }
-                ]
-              }
-            ]
           }
         ]
       }
@@ -337,24 +443,24 @@
   "navbar": {},
   "contextual": {
     "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
   },
   "redirects": [
     {
       "source": "/latest/:slug*",
-      "destination": "/versions/2.0.3dev/:slug*"
+      "destination": "/versions/2.0.4dev/:slug*"
     },
     {
       "source": "/stable/:slug*",
-      "destination": "/versions/2.0.2/:slug*"
+      "destination": "/versions/2.0.3/:slug*"
     }
   ],
   "footer": {
