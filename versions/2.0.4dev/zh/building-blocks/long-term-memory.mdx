@@ -1,27 +1,210 @@
 ---
 title: "长期记忆"
-description: "通过基于中间件的长期记忆后端，让知识在多个会话间持久保留"
+description: "基于智能体中间件实现的，跨会话长期记忆"
 ---
 
-## 概述
+**长期记忆** 是智能体跨会话保留信息的能力，包括用户偏好、历史决策，以及在会话中总结、凝练的知识或规则。
 
-**长期记忆**让 agent 在多次会话之间保留并检索可持久化的信息，例如用户偏好、历史决策，以及需要在后续对话中反复使用的知识。
+AgentScope 通过 [智能体中间件](/versions/2.0.4dev/zh/building-blocks/middleware) 的形式实现不同长期记忆能力。每个长期记忆实现都是一个 `MiddlewareBase` 的子类，以非侵入式的方式完成记忆的注入、检索和写回。
 
-在 AgentScope 中，记忆提取和存储服务（如 mem0、ReMe）作为长期记忆后端，以[中间件](/versions/2.0.4dev/zh/building-blocks/middleware)的形式集成到 agent 中。每个记忆中间件是一个 `MiddlewareBase` 子类，可以按需挂接到 agent 生命周期的 hook 位置。例如：
+AgentScope 目前支持以下长期记忆，更多实现正在开发中：
 
-- `on_reply` —— 在 reply 前检索记忆，在 reply 后把新的对话写回。
-- `on_system_prompt` —— 向模型声明记忆工具。
-- `list_tools` —— 提供供 agent 调用的 memory 相关工具，例如 `search_memory` / `add_memory`。
+| 名称 | 代码接口 | 描述 |
+|------|----------|------|
+| Agentic Memory | `AgenticMemoryMiddleware` | 基于 Markdown 文件的长期记忆，由智能体自主创建、维护和使用。 |
+| Mem0 | `Mem0Middleware` | 由 [mem0](https://github.com/mem0ai/mem0) 驱动的、开箱即用的长期记忆后端。 |
+| 开发中 ... | |
 
-具体挂接哪些位置由各记忆后端自行决定。
+## Agentic Memory
 
-这样无需改动 agent 与 model 代码：只要把记忆中间件传入 `Agent(middlewares=[...])` 即可启用长期记忆，并且能与任意其它中间件自由组合。
+Agentic Memory 是 AgentScope 原生的长期记忆实现，通过 Markdown 文件的读写和检索实现长期记忆功能。
+运行中智能体自主创建各种 Markdown 格式的记忆文件，并通过一个固定的 `MEMORY.md` 文件维护所有记忆文件的索引，并自动注入到系统提示中，是一种“渐进暴露”的实现方式。
 
-AgentScope 目前提供以下长期记忆后端，更多后端（如 ReMe）正在规划中：
+<Tip>
+Agentic Memory 通过 `backend` 参数支持切换不同的运行环境（例如本地、Docker、E2B、云端等），可以在不同的沙箱环境中运行，默认使用 `LocalBackend`。
+</Tip>
 
-| 后端 | 类 | 状态 |
-|------|----|------|
-| [mem0](https://github.com/mem0ai/mem0) | `Mem0Middleware` | 可用 |
+运行时，智能体通过内置的 `Read`、`Write` 和 `Edit` 工具创建、访问和修改长期记忆，典型的文件结构如下：
+
+```text
+<workdir>/Memory/
+├── MEMORY.md
+├── <agent_created_topic>.md
+├── <agent_created_feedback>.md
+└── ...
+```
+
+其中每个 Markdown 文件都遵循 frontmatter 规范，包含 `name`、`description` 和 `type` 字段，便于后续检索和注入：
+
+```markdown
+---
+name: {{memory name}}
+description: {{one-line description — used to decide relevance in future conversations, so be specific}}
+type: {{user, feedback, project, reference}}
+---
+
+{{memory content — for feedback/project types, structure as: rule/fact, then **Why:** and **How to apply:** lines}}
+```
+
+`MEMORY.md` 则保持简短，只作为索引并自动注入到系统提示中，示例如下：
+
+```markdown
+- [User profile](user_profile.md) — User location and answer-style preference.
+- [Feedback on answer style](feedback_answer_style.md) — User prefers concise Chinese answers.
+```
+
+Agentic Memory 有两种检索链路：一种是智能体根据提示词和 `MEMORY.md` 索引自主检索相关文件；另一种是在调用智能体 `reply`/`reply_stream` 时，启动一个异步任务使用 LLM 来选择相关的 Markdown 文件，并在后续推理前检查该异步任务是否结束，再以 `HintBlock` 的形式插入检索结果。
+
+需要注意检索过程是异步的：注入发生在推理-行动循环中推理**开始前**的检查点，具体时机取决于检索过程耗时；如果本次回复没有进入后续推理轮次（例如模型没有产生工具调用），则该次回复可能不会注入检索到的长期记忆内容。具体工作流程如下：
+
+```mermaid
+flowchart TD
+    A[User message] --> B[agent.reply / reply_stream]
+    B --> C[on_reply starts async retrieval task]
+    B --> E
+
+    subgraph MainLoop[Reasoning-acting loop]
+        E{Before reasoning:<br/>is async retrieval done?}
+        E -->|Yes| F[Inject selected memories as HintBlock]
+        E -->|No| G[Skip memory injection this iteration]
+        F --> H[Reasoning]
+        G --> H
+        H --> I{Tool calls?}
+        I -->|Yes| J[Acting: run tools such as Read / Write]
+        J --> K[Agent may update topic .md files and MEMORY.md]
+        K --> E
+        I -->|No| L[Return assistant response]
+    end
+
+    subgraph AsyncTask[Async memory retrieval task]
+        C --> M[List Markdown topic files]
+        M --> N[Parse filename, frontmatter description, mtime]
+        N --> O[LLM selects relevant filenames]
+        O --> P[Read selected Markdown files]
+        P --> Q[Task finished with formatted memory context]
+    end
+
+    Q -. checked before each reasoning .-> E
+```
+
+通过如下代码在不同的环境中使用 Agentic Memory：
+
+<CodeGroup>
+
+```python title="本地环境"
+from agentscope.agent import Agent
+from agentscope.middleware import AgenticMemoryMiddleware
+from agentscope.permission import AdditionalWorkingDirectory, PermissionMode
+from agentscope.tool import Read, Toolkit, Write, Edit
+
+
+workdir = "/tmp/agentscope_ltm_demo"
+memory = AgenticMemoryMiddleware(workdir=workdir)
+
+agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=my_chat_model,
+    toolkit=Toolkit(tools=[Read(), Write(), Edit()]),
+    middlewares=[memory],
+)
+
+# [可选] 允许示例中的 Write 工具写入 workdir。生产环境请根据安全策略配置权限。
+agent.state.permission_context.mode = PermissionMode.ACCEPT_EDITS
+agent.state.permission_context.working_directories[workdir] = (
+    AdditionalWorkingDirectory(path=workdir, source="long-term-memory-demo")
+)
+
+await agent.reply("请记住：我住在杭州，并且偏好简洁的中文回答。")
+
+# 重新创建一个智能体，只要复用同一个 workdir，就能使用同一份 Markdown 记忆。
+new_agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=my_chat_model,
+    toolkit=Toolkit(tools=[Read(), Write()]),
+    middlewares=[AgenticMemoryMiddleware(workdir=workdir)],
+)
+
+await new_agent.reply("你还记得我的所在地和回答风格偏好吗？")
+```
+
+```python title="Docker 环境"
+from agentscope.agent import Agent
+from agentscope.middleware import AgenticMemoryMiddleware
+from agentscope.tool import Read, Toolkit, Write
+from agentscope.workspace import DockerWorkspace
+
+
+workspace = DockerWorkspace()
+await workspace.initialize()
+
+# 获取 Docker 沙箱的 backend
+backend = workspace.get_backend()
+memory = AgenticMemoryMiddleware(
+    workdir=workspace.workdir,
+    # 切换到沙箱环境中
+    backend=backend,
+)
+
+agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=my_chat_model,
+    toolkit=Toolkit(
+        # Docker workspace 默认工具中自带 Read / Write / Edit 工具
+        tools=await workspace.list_tools(),
+        # 也可以自己传入 Read / Write / Edit 工具
+        # tools=[Read(backend=backend), Write(backend=backend), Edit(backend=backend)],
+    ),
+    middlewares=[memory],
+)
+
+try:
+    await agent.reply("请记住：我正在 Docker 沙箱中测试长期记忆。")
+finally:
+    await workspace.close()
+```
+
+```python title="E2B 环境"
+from agentscope.agent import Agent
+from agentscope.middleware import AgenticMemoryMiddleware
+from agentscope.tool import Read, Toolkit, Write
+from agentscope.workspace import E2BWorkspace
+
+
+workspace = E2BWorkspace()
+await workspace.initialize()
+
+# 获取 E2B 沙箱的 backend
+backend = workspace.get_backend()
+memory = AgenticMemoryMiddleware(
+    workdir= workspace.workdir,
+    # 切换到沙箱环境中
+    backend=backend,
+)
+
+agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=my_chat_model,
+    toolkit=Toolkit(
+        # E2B workspace 默认工具中自带 Read / Write / Edit 工具
+        tools=await workspace.list_tools(),
+        # 也可以自己传入 Read / Write / Edit 工具
+        # tools=[Read(backend=backend), Write(backend=backend), Edit(backend=backend)],
+    ),
+    middlewares=[memory],
+)
+
+try:
+    await agent.reply("请记住：我正在 E2B 沙箱中测试长期记忆。")
+finally:
+    await workspace.close()
+```
+
+</CodeGroup>
+
 
 ## Mem0
 
@@ -71,17 +254,17 @@ asyncio.run(main())
 ```
 
 <Note>
-`Mem0Middleware` 通过 `list_tools()` 提供 `search_memory` / `add_memory` 工具，而 agent **不会**自动调用它。要让这些工具对 agent 可用，需要你自己收集并传入 toolkit —— `Toolkit(tools=await mw.list_tools())`。在 `static_control` 模式下 `list_tools()` 返回空列表。
+`Mem0Middleware` 通过 `list_tools()` 提供 `search_memory` / `add_memory` 工具，而智能体 **不会** 自动调用它。要让这些工具对智能体可用，需要开发者手动传入 toolkit —— `Toolkit(tools=await mw.list_tools())`。在 `static_control` 模式下 `list_tools()` 返回空列表。
 </Note>
 
 ### 控制模式
 
-`mode` 参数决定 agent 与 mem0 的交互方式，默认为 `"both"`，与 AgentScope 1.x 的 `ReActAgent.long_term_memory_mode` 一致。
+`mode` 参数决定智能体与 mem0 的交互方式，默认为 `"both"`，与 AgentScope 1.x 的 `ReActAgent.long_term_memory_mode` 一致。
 
 | 模式 | 行为 |
 |------|------|
-| `static_control` | 中间件在每次 reply 前检索 mem0，把检索到的记忆以 `AssistantMsg(name="memory")` 注入上下文，并在 reply 后把新的对话写回。agent 对 mem0 无感知。 |
-| `agent_control` | 中间件暴露 `search_memory` / `add_memory` 工具，并在 system prompt 中追加一段简短的使用提示。由 agent 自行决定何时读写记忆；没有自动检索或写回。 |
+| `static_control` | 中间件在每次 reply 前检索 mem0，把检索到的记忆以 `AssistantMsg(name="memory")` 注入上下文，并在 reply 后把新的对话写回。智能体对 mem0 无感知。 |
+| `agent_control` | 中间件暴露 `search_memory` / `add_memory` 工具，并在系统提示中追加一段简短的使用提示。由智能体自行决定何时读写记忆；没有自动检索或写回。 |
 | `both` | 两种模式同时生效 —— 既自动检索，又提供按需调用的工具。 |
 
 ### 构造方式
@@ -113,7 +296,7 @@ Mem0Middleware(
 ```
   </Tab>
   <Tab title="预构建 client">
-  当你需要完全掌控时（例如使用托管 Platform，或在多个 agent 间共享同一存储），可传入预构建的 mem0 client。一旦提供 `client`，它具有绝对优先级，`chat_model` / `embedding_model` / `mem0_config` 都会被忽略。
+  当你需要完全掌控时（例如使用托管 Platform，或在多个智能体间共享同一存储），可传入预构建的 mem0 client。一旦提供 `client`，它具有绝对优先级，`chat_model` / `embedding_model` / `mem0_config` 都会被忽略。
 
 ```python
 from mem0 import AsyncMemoryClient
@@ -135,14 +318,14 @@ Mem0Middleware(
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `user_id` | `str` | *（必填）* | 用户记忆的 mem0 命名空间。 |
-| `mode` | `"static_control" \| "agent_control" \| "both"` | `"both"` | agent 与 mem0 的交互方式（见上文）。 |
+| `mode` | `"static_control" \| "agent_control" \| "both"` | `"both"` | 智能体与 mem0 的交互方式（见上文）。 |
 | `agent_id` | `str \| None` | `None` | 可选的更细粒度命名空间。 |
 | `top_k` | `int` | `5` | 每次 static-control 检索返回的最大记忆数；同时作为 `search_memory` 工具的默认值。 |
 | `threshold` | `float \| None` | `None` | 最小相似度分数；`None` 表示交由 mem0 决定。 |
-| `scope_search_by_agent` | `bool` | `True` | 为 `True` 时检索同时按 `user_id` 与 `agent_id` 过滤；为 `False` 时同一用户的记忆在多个 agent 间共享。 |
+| `scope_search_by_agent` | `bool` | `True` | 为 `True` 时检索同时按 `user_id` 与 `agent_id` 过滤；为 `False` 时同一用户的记忆在多个智能体间共享。 |
 | `await_write` | `bool` | `True` | 为 `True` 时回合结束后的写入会内联等待；为 `False` 时为异步触发（更快，但异常只在日志中体现）。 |
 
-### 供 agent 调用的工具
+### 供智能体调用的工具
 
 在 `agent_control` 与 `both` 模式下，中间件提供两个模型可按需调用的工具：
 

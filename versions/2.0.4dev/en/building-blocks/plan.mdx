@@ -16,11 +16,7 @@ AgentScope ships four planning tools out of the box:
 | `TaskList` | List every task with its status, owner, and blocking relationships | Yes |
 | `TaskUpdate` | Update a task's status, fields, or dependency edges; or delete it | No |
 
-All four are state-injected tools (`is_state_injected = True`): the agent runtime hands each call the live `AgentState`, and the tools read from / write to `agent.state.tasks_context`. That means the task list is **scoped per agent** and persists naturally across reasoning steps, ReAct rounds, and human-in-the-loop pauses, alongside the rest of the agent's saved state.
-
-<Tip>
-The planning tools are most useful when the work spans **three or more non-trivial steps**, involves **dependencies between subtasks**, or benefits from making progress **visible to the user**. For one-shot or purely conversational requests, equip them and the agent will skip them by design — the tool prompts explicitly tell it not to plan trivial work.
-</Tip>
+All four are state-injected tools (`is_state_injected = True`): the agent runtime hands each call the live `AgentState`, and the tools read from / write to `agent.state.tasks_context`. That means the task list is **scoped per agent** and persists with the agent state.
 
 ## Use Plan Tools
 
@@ -109,7 +105,7 @@ await TaskUpdate()(
 When a task is deleted, its ID is removed from every other task's `blocks` and `blocked_by` lists, so the dependency graph remains valid.
 
 <Note>
-`TaskList` annotates every task that still has unresolved `blocked_by` entries, and `TaskGet` returns the full edge list. The agent uses these hints to prefer unblocked work, but **enforcement is advisory** — nothing in the runtime prevents the model from working on a blocked task. Treat the dependency edges as a coordination signal, not a hard gate.
+`TaskList` annotates every task that still has unresolved `blocked_by` entries, and `TaskGet` returns the full edge list. The agent uses these hints to prefer unblocked work, but **enforcement is advisory** — nothing in the runtime prevents the model from working on a blocked task.
 </Note>
 
 ## Storage
@@ -132,11 +128,11 @@ class TaskContext(BaseModel):
     tasks: list[Task] = []
 ```
 
-`AgentState.tasks_context` is a regular field on the agent state model, which means:
+`AgentState.tasks_context` is a regular field on the `agent.state` model, which means:
 
-- **It survives serialization.** Calling `agent.state_dict()` (or whatever the host platform uses to persist `AgentState`) captures the task list verbatim, and restoring the state restores the plan.
-- **It is per-agent.** Two agents do not share a task list by default; multi-agent coordination is the developer's job (e.g. by routing all planning tools through one designated planner agent, or by manually syncing state between agents).
-- **It is mutable from outside the LLM loop.** Anything that can reach `agent.state` — middleware, application code, evaluators — can read and write tasks directly. The planning tools have no privileged access; they are simply a convenient LLM-facing surface over the same data structure.
+- **It survives serialization.** Saving `agent.state` captures the task list verbatim, and restoring the state restores the plan.
+- **It is per-agent.** Two agents do not share a task list by default; multi-agent coordination is the developer's job.
+- **It is mutable from outside the agent loop.** Anything that can reach `agent.state` — middleware, application code, evaluators — can read and write tasks directly. The planning tools have no privileged access; they are simply a convenient LLM-facing surface over the same data structure.
 
 ## Customize Tasks
 

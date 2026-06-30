@@ -69,7 +69,17 @@ At construction time the agent scans each middleware instance, checks which hook
 
 ## Built-in Middleware
 
-### TracingMiddleware
+AgentScope currently supports the following middleware implementations:
+
+| Scenario | Implementation | Description |
+|----------|----------------|-------------|
+| Tracing | `TracingMiddleware` | Provides OpenTelemetry tracing across the full agent lifecycle |
+| Budget control | `ReplyBudgetControlMiddleware` | Controls the token budget for a single reply |
+| Speech generation | `TTSMiddleware` | Intercepts text output and synthesizes speech |
+| Long-term memory | `AgenticMemoryMiddleware`,<br/>`Mem0Middleware` | Provides cross-session long-term memory implementations |
+| RAG | `RAGMiddleware` | Provides access to external knowledge bases |
+
+### Tracing
 
 `TracingMiddleware` wires the full agent lifecycle to [OpenTelemetry](https://opentelemetry.io/docs/specs/semconv/gen-ai/) tracing. It instruments `on_reply`, `on_model_call`, and `on_acting`, producing hierarchical spans.
 
@@ -155,7 +165,7 @@ with tracer.start_as_current_span(
 
 These custom spans are emitted alongside AgentScope's built-in spans and delivered to the same OTLP collector configured in the `TracerProvider`.
 
-### ReplyBudgetControlMiddleware
+### Budget Control
 
 `ReplyBudgetControlMiddleware` enforces a **weighted token budget per reply**. It tracks cumulative token usage across all reasoning steps within a single reply and, once the budget is exhausted, instructs the agent to wrap up immediately without invoking any further tools. This is useful for capping the cost or latency of long, tool-heavy ReAct loops.
 
@@ -217,7 +227,7 @@ The middleware is **stateless on the instance itself** — all runtime state liv
 The budget is scoped **per reply**, not per agent lifetime. Each new reply starts with a fresh counter, so the limit applies independently to every call to `agent(...)`.
 </Note>
 
-### TTSMiddleware
+### Speech Generation
 
 `TTSMiddleware` intercepts the agent's text output and synthesizes speech audio, injecting `DataBlockStartEvent` / `DataBlockDeltaEvent` / `DataBlockEndEvent` into the event stream alongside the text. It hooks into `on_reply` to observe every `TextBlockDeltaEvent` and `TextBlockEndEvent`.
 
@@ -285,12 +295,16 @@ Each `DataBlockDeltaEvent.data` carries an incremental base64-encoded audio chun
 
 ### Long-Term Memory
 
-AgentScope implements long-term memory as middleware, so an agent can persist and recall durable facts across sessions. A memory backend hooks `on_reply` (pre-reply search + post-reply write-back), `on_system_prompt` (advertise memory tools), and contributes agent-callable memory tools (such as `search_memory` / `add_memory`) via `list_tools`. The currently available backend is `Mem0Middleware`, powered by [mem0](https://github.com/mem0ai/mem0). See [Long-Term Memory](/versions/2.0.4dev/en/building-blocks/long-term-memory) for installation, control modes, and construction paths.
+AgentScope supports long-term memory as middleware, so agents can persist and recall information across sessions. See [Long-Term Memory](/versions/2.0.4dev/en/building-blocks/long-term-memory) for details.
+
+### RAG
+
+AgentScope also provides knowledge-base access through middleware, allowing agents to access external knowledge bases during reasoning. See [RAG](/versions/2.0.4dev/en/building-blocks/rag) for details.
 
 
 ## Custom Middleware
 
-Subclass `MiddlewareBase` and implement only the hooks you need — leave the rest alone.
+Subclass `MiddlewareBase` and implement only the hook positions you need.
 
 The example below covers every position in a single middleware. Each onion hook receives an `input_kwargs` dict carrying the fields that flow into the wrapped layer; forward it with `next_handler(**input_kwargs)`, or pass keyword arguments to override specific fields:
 

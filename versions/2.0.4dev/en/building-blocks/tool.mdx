@@ -148,6 +148,52 @@ The plan tools give the agent a structured task list it can append to, query, an
 
 See [Plan](/versions/2.0.4dev/en/building-blocks/plan) for the full task lifecycle, the storage model, and how to seed or customize tasks programmatically.
 
+
+### Switch Tool Backend
+
+The `Bash`, `Grep`, `Glob`, `Read`, `Write`, and `Edit` tools in AgentScope support backend switching — delegating their execution to different runtime environments such as the local filesystem, a Docker container, an E2B sandbox, and so on.
+
+A backend is selected via the `backend` argument. Backend instances are obtained from a `Workspace`, which defaults to the local environment. See [Workspace](/versions/2.0.4dev/en/building-blocks/workspace) for more details.
+
+<CodeGroup>
+```python title="Switch to Docker backend"
+from agentscope.workspace import DockerWorkspace
+
+# Obtain the backend from a Docker sandbox
+workspace = DockerWorkspace(...)
+await workspace.initialize()
+
+backend = workspace.get_backend()
+
+# Configure the tool
+bash = Bash(backend=backend)
+
+# Run logic
+...
+
+await workspace.close()
+```
+
+```python title="Switch to E2B backend"
+from agentscope.workspace import E2BWorkspace
+
+# Obtain the backend from an E2B sandbox
+workspace = E2BWorkspace(...)
+await workspace.initialize()
+
+backend = workspace.get_backend()
+
+# Configure the tool
+bash = Bash(backend=backend)
+
+# Run logic
+...
+
+await workspace.close()
+```
+</CodeGroup>
+
+
 ### Create Custom Tool
 
 To create a custom tool, subclass `ToolBase`, declare its schema, and implement `check_permissions` and `call`:
