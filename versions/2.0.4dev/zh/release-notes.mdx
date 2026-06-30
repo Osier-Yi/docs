@@ -179,7 +179,7 @@ description: "AgentScope 版本改动和更新日志。"
 
 - **基于 `ToolBase` 重建内置工具**：全新的 `_bash`、`_edit`、`_glob`、`_grep`、`_read`、`_write` 实现，以及共享的 `_meta` 与 `_constants`，全部基于新的工具基类。([#1502](https://github.com/agentscope-ai/agentscope/pull/1502))
 - **Task 工具**：新增 `TaskCreate`、`TaskGet`、`TaskList`、`TaskUpdate`（详见 [Plan](/versions/2.0.4dev/zh/building-blocks/plan) 页面）。([#1549](https://github.com/agentscope-ai/agentscope/pull/1549))
-- **Tool 与 Workspace 集成**：工具包与 Workspace 模块被打通进 `Agent` 类，文件/Shell 工具现在统一在 Agent 的 Workspace 中执行。([#1642](https://github.com/agentscope-ai/agentscope/pull/1642))
+- **工具与 Workspace 集成**：工具包与 Workspace 模块被打通进 `Agent` 类，文件/Shell 工具现在统一在智能体的 Workspace 中执行。([#1642](https://github.com/agentscope-ai/agentscope/pull/1642))
 
 **Workspace**
 
@@ -218,8 +218,8 @@ description: "AgentScope 版本改动和更新日志。"
 
 **Tool**
 
-- **Tool 模块重构**：提供新的基类与工具包逻辑，移除了遗留的 MCP `client_base`，相关教程也同步更新。([#1493](https://github.com/agentscope-ai/agentscope/pull/1493))
-- **Skill Loader 重构**：新增 `tool/_skill/` 包（`_base.py` + 171 行的 `_local_loader.py`），替换原先内联在 Toolkit 中的 Skill 逻辑；同时新增内置 `_skill.py` 工具，将 Skill 暴露给 Agent。([#1513](https://github.com/agentscope-ai/agentscope/pull/1513))
+- **工具模块重构**：提供新的基类与工具包逻辑，移除了遗留的 MCP `client_base`，相关教程也同步更新。([#1493](https://github.com/agentscope-ai/agentscope/pull/1493))
+- **Skill Loader 重构**：新增 `tool/_skill/` 包（`_base.py` + 171 行的 `_local_loader.py`），替换原先内联在 Toolkit 中的 Skill 逻辑；同时新增内置 `_skill.py` 工具，将 Skill 暴露给智能体。([#1513](https://github.com/agentscope-ai/agentscope/pull/1513))
 - **`tool_choice` 参数重构**：将各种模式（`auto`、`none`、`required` 等）改为 `tool/_types.py` 中的类型化对象，从而能够支持 OpenAI Response API 的高级 Prompt Cache，所有 Provider 的实现同步更新。([#1524](https://github.com/agentscope-ai/agentscope/pull/1524))
 
 **Model 与 Formatter**

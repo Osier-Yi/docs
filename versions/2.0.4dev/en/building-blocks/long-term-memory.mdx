@@ -1,27 +1,210 @@
 ---
 title: "Long-Term Memory"
-description: "Persist knowledge across sessions with middleware-based long-term memory backends"
+description: "Cross-session long-term memory implemented with agent middleware"
 ---
 
-## Overview
+**Long-term memory** is an agent's ability to retain information across sessions, including user preferences, past decisions, and knowledge or rules summarized from conversations.
 
-**Long-term memory** lets an agent store and retrieve durable information across sessions — user preferences, past decisions, and knowledge that should persist beyond a single conversation.
+AgentScope implements different long-term memory capabilities as [agent middleware](/versions/2.0.4dev/en/building-blocks/middleware). Each long-term memory implementation is a `MiddlewareBase` subclass that non-invasively handles memory injection, retrieval, and write-back.
 
-In AgentScope, memory extraction and storage services (such as mem0 and ReMe) serve as long-term memory backends, integrated into agents as [middleware](/versions/2.0.4dev/en/building-blocks/middleware). Each memory middleware is a `MiddlewareBase` subclass that can hook into any position of the agent lifecycle as needed. For example:
+AgentScope currently supports the following long-term memory implementations, with more under development:
 
-- `on_reply` — search the store before a reply and write the new exchange back afterward.
-- `on_system_prompt` — advertise memory tools to the model.
-- `list_tools` — contribute agent-callable memory tools, such as `search_memory` / `add_memory`.
+| Name | Code API | Description |
+|------|----------|-------------|
+| Agentic Memory | `AgenticMemoryMiddleware` | Markdown-file-based long-term memory that agents create, maintain, and use autonomously. |
+| Mem0 | `Mem0Middleware` | A drop-in long-term memory backend powered by [mem0](https://github.com/mem0ai/mem0). |
+| More coming ... | | |
 
-Which positions a backend hooks is up to that backend.
+## Agentic Memory
 
-This keeps the agent and model code untouched: you opt into long-term memory simply by passing a memory middleware into `Agent(middlewares=[...])`, and you can compose it with any other middleware.
+Agentic Memory is AgentScope's native long-term memory implementation. It provides long-term memory through Markdown file reads, writes, and retrieval.
+At runtime, the agent autonomously creates Markdown memory files, maintains an index of all memory files in a fixed `MEMORY.md` file, and automatically injects that index into the system prompt. This follows a "progressive disclosure" pattern.
 
-AgentScope currently ships the following long-term memory backend, with more (e.g. ReMe) planned:
+<Tip>
+Agentic Memory supports different runtime environments through the `backend` parameter, such as local, Docker, E2B, and cloud sandboxes. It uses `LocalBackend` by default.
+</Tip>
 
-| Backend | Class | Status |
-|---------|-------|--------|
-| [mem0](https://github.com/mem0ai/mem0) | `Mem0Middleware` | Available |
+At runtime, the agent uses the built-in `Read`, `Write`, and `Edit` tools to create, access, and modify long-term memory. A typical file structure looks like this:
+
+```text
+<workdir>/Memory/
+├── MEMORY.md
+├── <agent_created_topic>.md
+├── <agent_created_feedback>.md
+└── ...
+```
+
+Each Markdown file follows the frontmatter convention and includes `name`, `description`, and `type` fields for later retrieval and injection:
+
+```markdown
+---
+name: {{memory name}}
+description: {{one-line description — used to decide relevance in future conversations, so be specific}}
+type: {{user, feedback, project, reference}}
+---
+
+{{memory content — for feedback/project types, structure as: rule/fact, then **Why:** and **How to apply:** lines}}
+```
+
+`MEMORY.md` stays short. It serves only as an index and is automatically injected into the system prompt. For example:
+
+```text
+- [User profile](user_profile.md) — User location and answer-style preference.
+- [Feedback on answer style](feedback_answer_style.md) — User prefers concise Chinese answers.
+```
+
+Agentic Memory has two retrieval paths. First, the agent can autonomously retrieve relevant files based on the prompt and the `MEMORY.md` index. Second, when `reply` / `reply_stream` is called, the middleware starts an async task that asks an LLM to select relevant Markdown files, then checks before later reasoning steps whether that task has finished and injects the retrieved results as a `HintBlock`.
+
+Note that retrieval is asynchronous: injection happens at checkpoints **before reasoning starts** inside the reasoning-acting loop, and the exact timing depends on retrieval latency. If the current reply does not enter a later reasoning round, such as when the model produces no tool calls, the retrieved long-term memory may not be injected into that reply. The workflow is:
+
+```mermaid
+flowchart TD
+    A[User message] --> B[agent.reply / reply_stream]
+    B --> C[on_reply starts async retrieval task]
+    B --> E
+
+    subgraph MainLoop[Reasoning-acting loop]
+        E{Before reasoning:<br/>is async retrieval done?}
+        E -->|Yes| F[Inject selected memories as HintBlock]
+        E -->|No| G[Skip memory injection this iteration]
+        F --> H[Reasoning]
+        G --> H
+        H --> I{Tool calls?}
+        I -->|Yes| J[Acting: run tools such as Read / Write]
+        J --> K[Agent may update topic .md files and MEMORY.md]
+        K --> E
+        I -->|No| L[Return assistant response]
+    end
+
+    subgraph AsyncTask[Async memory retrieval task]
+        C --> M[List Markdown topic files]
+        M --> N[Parse filename, frontmatter description, mtime]
+        N --> O[LLM selects relevant filenames]
+        O --> P[Read selected Markdown files]
+        P --> Q[Task finished with formatted memory context]
+    end
+
+    Q -. checked before each reasoning .-> E
+```
+
+Use Agentic Memory in different environments as follows:
+
+<CodeGroup>
+
+```python title="Local environment"
+from agentscope.agent import Agent
+from agentscope.middleware import AgenticMemoryMiddleware
+from agentscope.permission import AdditionalWorkingDirectory, PermissionMode
+from agentscope.tool import Read, Toolkit, Write, Edit
+
+
+workdir = "/tmp/agentscope_ltm_demo"
+memory = AgenticMemoryMiddleware(workdir=workdir)
+
+agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=my_chat_model,
+    toolkit=Toolkit(tools=[Read(), Write(), Edit()]),
+    middlewares=[memory],
+)
+
+# Optional: allow the Write tool in this example to write into workdir.
+# In production, configure permissions according to your security policy.
+agent.state.permission_context.mode = PermissionMode.ACCEPT_EDITS
+agent.state.permission_context.working_directories[workdir] = (
+    AdditionalWorkingDirectory(path=workdir, source="long-term-memory-demo")
+)
+
+await agent.reply("Remember that I live in Hangzhou and prefer concise Chinese answers.")
+
+# Recreate an agent. Reusing the same workdir reuses the same Markdown memories.
+new_agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=my_chat_model,
+    toolkit=Toolkit(tools=[Read(), Write(), Edit()]),
+    middlewares=[AgenticMemoryMiddleware(workdir=workdir)],
+)
+
+await new_agent.reply("Do you remember my location and answer style preference?")
+```
+
+```python title="Docker environment"
+from agentscope.agent import Agent
+from agentscope.middleware import AgenticMemoryMiddleware
+from agentscope.tool import Read, Toolkit, Write
+from agentscope.workspace import DockerWorkspace
+
+
+workspace = DockerWorkspace()
+await workspace.initialize()
+
+# Get the Docker sandbox backend.
+backend = workspace.get_backend()
+memory = AgenticMemoryMiddleware(
+    workdir=workspace.workdir,
+    # Switch to the sandbox environment.
+    backend=backend,
+)
+
+agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=my_chat_model,
+    toolkit=Toolkit(
+        # Docker workspace tools include Read / Write / Edit by default.
+        tools=await workspace.list_tools(),
+        # You can also pass Read / Write / Edit yourself.
+        # tools=[Read(backend=backend), Write(backend=backend), Edit(backend=backend)],
+    ),
+    middlewares=[memory],
+)
+
+try:
+    await agent.reply("Remember that I am testing long-term memory in a Docker sandbox.")
+finally:
+    await workspace.close()
+```
+
+```python title="E2B environment"
+from agentscope.agent import Agent
+from agentscope.middleware import AgenticMemoryMiddleware
+from agentscope.tool import Read, Toolkit, Write
+from agentscope.workspace import E2BWorkspace
+
+
+workspace = E2BWorkspace()
+await workspace.initialize()
+
+# Get the E2B sandbox backend.
+backend = workspace.get_backend()
+memory = AgenticMemoryMiddleware(
+    workdir=workspace.workdir,
+    # Switch to the sandbox environment.
+    backend=backend,
+)
+
+agent = Agent(
+    name="assistant",
+    system_prompt="You are a helpful assistant.",
+    model=my_chat_model,
+    toolkit=Toolkit(
+        # E2B workspace tools include Read / Write / Edit by default.
+        tools=await workspace.list_tools(),
+        # You can also pass Read / Write / Edit yourself.
+        # tools=[Read(backend=backend), Write(backend=backend), Edit(backend=backend)],
+    ),
+    middlewares=[memory],
+)
+
+try:
+    await agent.reply("Remember that I am testing long-term memory in an E2B sandbox.")
+finally:
+    await workspace.close()
+```
+
+</CodeGroup>
 
 ## Mem0
 
