@@ -444,7 +444,7 @@ A **TTS Model** converts text into synthesized speech audio, supporting both sta
 |----------|-------------|------------|
 | DashScope | `DashScopeTTSModel` | Qwen3-TTS, multiple voices, streaming output |
 | DashScope (Realtime) | `DashScopeRealtimeTTSModel` | Qwen3-TTS WebSocket streaming input, ideal for LLM output piping |
-| DashScope (CosyVoice Realtime) | `DashScopeCosyVoiceRealtimeTTSModel` | CosyVoice-v3 streaming input, supports cosyvoice-v3-plus/flash/sambert |
+| DashScope (CosyVoice) | `DashScopeCosyVoiceTTSModel` | CosyVoice-v3, supports both standard and realtime (streaming-input) modes; cosyvoice-v3-flash/plus |
 
 ### Create TTS Model
 
@@ -477,15 +477,28 @@ tts = DashScopeRealtimeTTSModel(
 )
 ```
 
-```python Realtime (CosyVoice Streaming Input)
+```python CosyVoice (Standard)
 import os
-from agentscope.tts import DashScopeCosyVoiceRealtimeTTSModel
+from agentscope.tts import DashScopeCosyVoiceTTSModel
 from agentscope.credential import DashScopeCredential
 
-tts = DashScopeCosyVoiceRealtimeTTSModel(
+tts = DashScopeCosyVoiceTTSModel(
     credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
-    model="cosyvoice-v3-plus",
-    parameters=DashScopeCosyVoiceRealtimeTTSModel.Parameters(voice="longanyang"),
+    model="cosyvoice-v3-flash",
+    parameters=DashScopeCosyVoiceTTSModel.Parameters(voice="longanhuan"),
+    stream=True,
+)
+```
+
+```python CosyVoice (Realtime)
+import os
+from agentscope.tts import DashScopeCosyVoiceTTSModel
+from agentscope.credential import DashScopeCredential
+
+tts = DashScopeCosyVoiceTTSModel(
+    credential=DashScopeCredential(api_key=os.environ["DASHSCOPE_API_KEY"]),
+    model="cosyvoice-v3-flash",
+    parameters=DashScopeCosyVoiceTTSModel.Parameters(voice="longanhuan", realtime=True),
     stream=True,
 )
 ```
@@ -500,7 +513,7 @@ Common constructor arguments shared by every TTS model:
 | `parameters` | `Parameters \| None` | Provider-specific parameters such as `voice` |
 | `stream` | `bool` | Whether to stream audio output |
 
-Additional arguments for `DashScopeRealtimeTTSModel` and `DashScopeCosyVoiceRealtimeTTSModel`:
+Additional arguments for `DashScopeRealtimeTTSModel` and `DashScopeCosyVoiceTTSModel` (realtime mode):
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -561,10 +574,10 @@ asyncio.run(main())
 
 ### Realtime TTS (Streaming Input)
 
-For realtime models (`DashScopeRealtimeTTSModel` and `DashScopeCosyVoiceRealtimeTTSModel`), text can be pushed incrementally as it arrives from a streaming LLM. Both share the same `push()` / `synthesize()` interface. The lifecycle is managed via `async with` or manual `connect()` / `close()`:
+For realtime models (`DashScopeRealtimeTTSModel` and `DashScopeCosyVoiceTTSModel` with `realtime=True`), text can be pushed incrementally as it arrives from a streaming LLM. Both share the same `push()` / `synthesize()` interface. The lifecycle is managed via `async with` or manual `connect()` / `close()`:
 
 <Note>
-`DashScopeRealtimeTTSModel` (Qwen3) produces audio at token-level granularity — each `push()` call typically returns audio data. In contrast, `DashScopeCosyVoiceRealtimeTTSModel` relies on the CosyVoice server which automatically segments text into sentences before synthesizing. Audio is only returned after a complete sentence boundary is detected, so `push()` may return empty responses for partial sentences. Calling `synthesize()` forces synthesis of all remaining text including incomplete sentences.
+`DashScopeRealtimeTTSModel` (Qwen3) produces audio at token-level granularity — each `push()` call typically returns audio data. In contrast, `DashScopeCosyVoiceTTSModel` with `realtime=True` relies on the CosyVoice server which automatically segments text into sentences before synthesizing. Audio is only returned after a complete sentence boundary is detected, so `push()` may return empty responses for partial sentences. Calling `synthesize()` forces synthesis of all remaining text including incomplete sentences.
 </Note>
 
 ```python
@@ -667,19 +680,24 @@ voices:
 parameter_overrides: {}
 ```
 
-```yaml CosyVoice Realtime
-name: cosyvoice-v3-plus
-label: CosyVoice-v3-Plus
+```yaml CosyVoice
+name: cosyvoice-v3-flash
+label: CosyVoice-v3-Flash
 status: active
-realtime: true
 input_types:
   - text/plain
 output_types:
   - audio/wav
 voices:
+  - longanhuan
   - longanyang
-  - longxiaochun
-  - longshuo
+  - longhuhu_v3
+  - longyingmu_v3
+  - longxiaochun_v3
+  - longxiaoxia_v3
+  - longlaotie_v3
+  - longshuo_v3
+  - longshu_v3
 parameter_overrides: {}
 ```
 
@@ -709,13 +727,13 @@ for card in cards:
 Or directly on the model class:
 
 ```python
-from agentscope.tts import DashScopeTTSModel, DashScopeCosyVoiceRealtimeTTSModel
+from agentscope.tts import DashScopeTTSModel, DashScopeCosyVoiceTTSModel
 
 # Qwen3 TTS models
 cards = DashScopeTTSModel.list_models()
 
-# CosyVoice Realtime models
-cosyvoice_cards = DashScopeCosyVoiceRealtimeTTSModel.list_models()
+# CosyVoice models
+cosyvoice_cards = DashScopeCosyVoiceTTSModel.list_models()
 ```
 
 ### Custom TTS Provider
