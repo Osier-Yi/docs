@@ -16,6 +16,7 @@ AgentScope 的模型层由 API 凭证（Credential）和模型族组成。一个
       <Tree.File name="..." />
     </Tree.Folder>
     <Tree.Folder name="TTSModelBase" defaultOpen>
+      <Tree.File name="OpenAITTSModel" />
       <Tree.File name="DashScopeTTSModel" />
       <Tree.File name="DashScopeRealtimeTTSModel" />
       <Tree.File name="DashScopeCosyVoiceRealtimeTTSModel" />
@@ -437,6 +438,7 @@ cards = model_cls.list_models()                          # -> list[ModelCard]
 
 | 提供商 | 模型类 | 说明 |
 |--------|--------|------|
+| OpenAI | `OpenAITTSModel` | tts-1、tts-1-hd、gpt-4o-mini-tts；多种音色；可配置输出格式（mp3、wav、opus 等） |
 | DashScope | `DashScopeTTSModel` | Qwen3-TTS，多种音色，流式输出 |
 | DashScope (Realtime) | `DashScopeRealtimeTTSModel` | Qwen3-TTS WebSocket 流式输入，适合对接 LLM 流式输出 |
 | DashScope (CosyVoice) | `DashScopeCosyVoiceTTSModel` | CosyVoice-v3，支持标准与实时（流式输入）两种模式；cosyvoice-v3-flash/plus |
@@ -446,6 +448,19 @@ cards = model_cls.list_models()                          # -> list[ModelCard]
 每个 TTS Model 接收一个凭证、一个模型名，以及可选的提供商专属 `Parameters` 对象。下面两个 tab 分别展示标准和实时两种初始化场景：
 
 <CodeGroup>
+```python OpenAI
+import os
+from agentscope.tts import OpenAITTSModel
+from agentscope.credential import OpenAICredential
+
+tts = OpenAITTSModel(
+    credential=OpenAICredential(api_key=os.environ["OPENAI_API_KEY"]),
+    model="tts-1",
+    parameters=OpenAITTSModel.Parameters(voice="alloy", response_format="mp3"),
+    stream=True,
+)
+```
+
 ```python 标准模式
 import os
 from agentscope.tts import DashScopeTTSModel
@@ -544,7 +559,30 @@ async def synthesize(
 | `id` | `str` | 自动生成的唯一标识 |
 | `metadata` | `dict \| None` | 可选的提供商特定元数据 |
 
-```python
+<CodeGroup>
+```python OpenAI
+import asyncio
+import os
+from agentscope.tts import OpenAITTSModel
+from agentscope.credential import OpenAICredential
+
+async def main():
+    tts = OpenAITTSModel(
+        credential=OpenAICredential(api_key=os.environ["OPENAI_API_KEY"]),
+        model="tts-1",
+        parameters=OpenAITTSModel.Parameters(voice="alloy"),
+        stream=True,
+    )
+
+    async for chunk in await tts.synthesize("你好，世界！"):
+        if chunk.content:
+            # chunk.content 是包含 base64 编码 audio/mpeg 数据的 DataBlock
+            print(f"音频 chunk: {len(chunk.content.source.data)} bytes")
+
+asyncio.run(main())
+```
+
+```python DashScope
 import asyncio
 import os
 from agentscope.tts import DashScopeTTSModel
@@ -565,6 +603,7 @@ async def main():
 
 asyncio.run(main())
 ```
+</CodeGroup>
 
 ### 实时 TTS（流式输入）
 
@@ -655,6 +694,36 @@ async for event in agent.reply_stream(user_msg):
 
 `TTSModelCard` 描述 TTS 模型的能力（可用音色、流式支持、参数范围），用于驱动前端模型选择器。每个 card 由模型实现旁的 YAML 文件定义：
 
+```yaml OpenAI TTS-1
+name: tts-1
+label: TTS-1
+status: active
+input_types:
+  - text/plain
+output_types:
+  - audio/mpeg
+  - audio/opus
+  - audio/aac
+  - audio/flac
+  - audio/wav
+  - audio/pcm
+voices:
+  - alloy
+  - ash
+  - ballad
+  - coral
+  - echo
+  - fable
+  - onyx
+  - nova
+  - sage
+  - shimmer
+  - verse
+parameter_overrides:
+  instructions:
+    hidden: true
+```
+
 ```yaml Qwen3 TTS
 name: qwen3-tts-flash
 label: Qwen3-TTS-Flash
@@ -718,7 +787,10 @@ for card in cards:
 或直接通过模型类：
 
 ```python
-from agentscope.tts import DashScopeTTSModel, DashScopeCosyVoiceTTSModel
+from agentscope.tts import OpenAITTSModel, DashScopeTTSModel, DashScopeCosyVoiceTTSModel
+
+# OpenAI TTS 模型
+openai_cards = OpenAITTSModel.list_models()
 
 # Qwen3 TTS 模型
 cards = DashScopeTTSModel.list_models()

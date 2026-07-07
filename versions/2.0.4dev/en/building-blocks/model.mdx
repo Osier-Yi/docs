@@ -21,6 +21,7 @@ The model layer is organized as a two-tier hierarchy: a **Credential** at the to
       <Tree.File name="OllamaChatModel" />
     </Tree.Folder>
     <Tree.Folder name="TTSModelBase" defaultOpen>
+      <Tree.File name="OpenAITTSModel" />
       <Tree.File name="DashScopeTTSModel" />
       <Tree.File name="DashScopeRealtimeTTSModel" />
       <Tree.File name="DashScopeCosyVoiceRealtimeTTSModel" />
@@ -442,6 +443,7 @@ A **TTS Model** converts text into synthesized speech audio, supporting both sta
 
 | Provider | Model Class | Highlights |
 |----------|-------------|------------|
+| OpenAI | `OpenAITTSModel` | tts-1, tts-1-hd, gpt-4o-mini-tts; multiple voices; configurable output format (mp3, wav, opus, …) |
 | DashScope | `DashScopeTTSModel` | Qwen3-TTS, multiple voices, streaming output |
 | DashScope (Realtime) | `DashScopeRealtimeTTSModel` | Qwen3-TTS WebSocket streaming input, ideal for LLM output piping |
 | DashScope (CosyVoice) | `DashScopeCosyVoiceTTSModel` | CosyVoice-v3, supports both standard and realtime (streaming-input) modes; cosyvoice-v3-flash/plus |
@@ -451,6 +453,19 @@ A **TTS Model** converts text into synthesized speech audio, supporting both sta
 Every TTS model takes a credential, a model name, and an optional provider-specific `Parameters` object. The two tabs below show the standard and realtime setups:
 
 <CodeGroup>
+```python OpenAI
+import os
+from agentscope.tts import OpenAITTSModel
+from agentscope.credential import OpenAICredential
+
+tts = OpenAITTSModel(
+    credential=OpenAICredential(api_key=os.environ["OPENAI_API_KEY"]),
+    model="tts-1",
+    parameters=OpenAITTSModel.Parameters(voice="alloy", response_format="mp3"),
+    stream=True,
+)
+```
+
 ```python Non-Realtime (Standard)
 import os
 from agentscope.tts import DashScopeTTSModel
@@ -549,7 +564,30 @@ Each `TTSResponse` carries:
 | `id` | `str` | Auto-generated unique identifier |
 | `metadata` | `dict \| None` | Optional provider-specific metadata |
 
-```python
+<CodeGroup>
+```python OpenAI
+import asyncio
+import os
+from agentscope.tts import OpenAITTSModel
+from agentscope.credential import OpenAICredential
+
+async def main():
+    tts = OpenAITTSModel(
+        credential=OpenAICredential(api_key=os.environ["OPENAI_API_KEY"]),
+        model="tts-1",
+        parameters=OpenAITTSModel.Parameters(voice="alloy"),
+        stream=True,
+    )
+
+    async for chunk in await tts.synthesize("Hello, world!"):
+        if chunk.content:
+            # chunk.content is a DataBlock with base64-encoded audio/mpeg
+            print(f"Audio chunk: {len(chunk.content.source.data)} bytes")
+
+asyncio.run(main())
+```
+
+```python DashScope
 import asyncio
 import os
 from agentscope.tts import DashScopeTTSModel
@@ -571,6 +609,7 @@ async def main():
 
 asyncio.run(main())
 ```
+</CodeGroup>
 
 ### Realtime TTS (Streaming Input)
 
@@ -664,6 +703,36 @@ The middleware automatically selects the optimal synthesis strategy:
 
 `TTSModelCard` describes a TTS model's capabilities — available voices, streaming support, and parameter ranges — and is used to drive the frontend model picker. Each card is defined by a YAML file alongside the model implementation:
 
+```yaml OpenAI TTS-1
+name: tts-1
+label: TTS-1
+status: active
+input_types:
+  - text/plain
+output_types:
+  - audio/mpeg
+  - audio/opus
+  - audio/aac
+  - audio/flac
+  - audio/wav
+  - audio/pcm
+voices:
+  - alloy
+  - ash
+  - ballad
+  - coral
+  - echo
+  - fable
+  - onyx
+  - nova
+  - sage
+  - shimmer
+  - verse
+parameter_overrides:
+  instructions:
+    hidden: true
+```
+
 ```yaml Qwen3 TTS
 name: qwen3-tts-flash
 label: Qwen3-TTS-Flash
@@ -727,7 +796,10 @@ for card in cards:
 Or directly on the model class:
 
 ```python
-from agentscope.tts import DashScopeTTSModel, DashScopeCosyVoiceTTSModel
+from agentscope.tts import OpenAITTSModel, DashScopeTTSModel, DashScopeCosyVoiceTTSModel
+
+# OpenAI TTS models
+openai_cards = OpenAITTSModel.list_models()
 
 # Qwen3 TTS models
 cards = DashScopeTTSModel.list_models()
