@@ -128,7 +128,7 @@ async def __call__(
 返回类型取决于模型的 `stream` 设置：
 
 - **`stream=False`** —— 返回单个 `ChatResponse`，承载完整输出。
-- **`stream=True`** —— 返回 `AsyncGenerator[ChatResponse, None]`。中间 chunk（`is_last=False`）只携带**增量**内容；最后一个 chunk（`is_last=True`）承载**完整的累积内容**。如果提供商的 `_call_api` 只产出增量 chunk，`ChatModelBase.__call__` 会自动累积并追加最终 chunk，因此调用方和自定义模型实现都无需自行累积增量。
+- **`stream=True`** —— 返回 `AsyncGenerator[ChatResponse, None]`。中间 chunk（`is_last=False`）只携带**增量**内容；最后一个 chunk（`is_last=True`）承载**完整的累积内容**。
 
 如果运行中的模型调用被中断，模型层会返回一个最终 `ChatResponse`，其中包含已累积的部分内容，并将 `finished_reason` 设为 `FinishedReason.INTERRUPTED`；正常结束时为 `FinishedReason.COMPLETED`。
 
