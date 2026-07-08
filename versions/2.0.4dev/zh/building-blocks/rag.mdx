@@ -53,7 +53,12 @@ PDF 与 PPT 解析依赖额外的第三方库，可以通过 `pip install agents
 | 类 | 描述 |
 | --- | --- |
 | `QdrantStore` | 基于 Qdrant 的向量数据库实现，支持内存（`location=":memory:"`）、本地磁盘（`path=...`）、远程服务（`url=...`）三种部署方式 |
+| `MilvusLiteStore` | 基于 Milvus Lite 的向量数据库实现，支持本地持久化 `.db` 文件（`uri="./rag_demo.db"`）以及 Milvus 兼容的服务端 URI |
 | 开发中 ... |  |
+
+<Tip>
+Milvus Lite 相关依赖是可选依赖。如需使用 `MilvusLiteStore`，请先通过 `pip install "agentscope[milvuslite]"` 安装。
+</Tip>
 
 ## RAG 使用
 
@@ -186,6 +191,14 @@ AgentScope 推荐通过**知识库句柄 `KnowledgeBase`** 作为入口使用 RA
     <Note>
     `KnowledgeBase` 不会自己创建 / 关闭向量库连接，使用前需要先把 `VectorStoreBase` 实例置于 `async with` 上下文中。
     </Note>
+
+    如果希望使用 Milvus Lite 作为本地持久化向量库，安装 `agentscope[milvuslite]` 后，只需要替换向量库的构造方式：
+
+    ```python
+    from agentscope.rag import MilvusLiteStore
+
+    store = MilvusLiteStore(uri="./rag_demo.db")
+    ```
   </Step>
 </Steps>
 

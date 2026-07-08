@@ -53,7 +53,12 @@ See the [Embedding Model chapter](/versions/2.0.4dev/en/building-blocks/model).
 | Class | Description |
 | --- | --- |
 | `QdrantStore` | Qdrant-based vector database implementation, supporting in-memory (`location=":memory:"`), local disk (`path=...`), and remote service (`url=...`) deployments |
+| `MilvusLiteStore` | Milvus Lite-based vector database implementation, supporting local persistent `.db` files (`uri="./rag_demo.db"`) and Milvus-compatible endpoint URIs |
 | In development ... |  |
+
+<Tip>
+Milvus Lite dependencies are optional. Install them with `pip install "agentscope[milvuslite]"` when you want to use `MilvusLiteStore`.
+</Tip>
 
 ## Using RAG
 
@@ -186,6 +191,14 @@ Indexing a file goes through three steps — **file parsing → chunking → emb
     <Note>
     `KnowledgeBase` does not open or close the vector store connection itself; enter the `VectorStoreBase` instance in an `async with` block before using it.
     </Note>
+
+    To use Milvus Lite as a local persistent vector store, install `agentscope[milvuslite]` and replace only the vector store construction:
+
+    ```python
+    from agentscope.rag import MilvusLiteStore
+
+    store = MilvusLiteStore(uri="./rag_demo.db")
+    ```
   </Step>
 </Steps>
 
