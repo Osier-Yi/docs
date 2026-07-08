@@ -128,7 +128,9 @@ async def __call__(
 返回类型取决于模型的 `stream` 设置：
 
 - **`stream=False`** —— 返回单个 `ChatResponse`，承载完整输出。
-- **`stream=True`** —— 返回 `AsyncGenerator[ChatResponse, None]`。中间 chunk（`is_last=False`）只携带**增量**内容。为了让开发者无需自行累积增量，AgentScope 会在末尾追加一个 `is_last=True` 的 chunk，承载**完整的累积内容**。
+- **`stream=True`** —— 返回 `AsyncGenerator[ChatResponse, None]`。中间 chunk（`is_last=False`）只携带**增量**内容；最后一个 chunk（`is_last=True`）承载**完整的累积内容**。
+
+如果运行中的模型调用被中断，模型层会返回一个最终 `ChatResponse`，其中包含已累积的部分内容，并将 `finished_reason` 设为 `FinishedReason.INTERRUPTED`；正常结束时为 `FinishedReason.COMPLETED`。
 
 ```python
 import asyncio
@@ -164,7 +166,7 @@ Delta: [TextBlock(text='4, 5')]
 Final: [TextBlock(text='1, 2, 3, 4, 5')]
 ```
 
-每个 `ChatResponse` 包含若干 content block（`TextBlock`、`ThinkingBlock`、`ToolCallBlock`、`DataBlock`）、一个 `is_last` 标志，以及记录 token 数与耗时的 `ChatUsage`。
+每个 `ChatResponse` 包含若干 content block（`TextBlock`、`ThinkingBlock`、`ToolCallBlock`、`DataBlock`）、一个 `is_last` 标志、一个 `finished_reason`（`FinishedReason.COMPLETED` 或 `FinishedReason.INTERRUPTED`），以及记录 token 数与耗时的 `ChatUsage`。
 
 ### 生成结构化输出
 
@@ -259,7 +261,7 @@ class MyProviderCredential(CredentialBase):
 
 #### 步骤 2：实现 Chat Model
 
-继承 `ChatModelBase`，定义内部 `Parameters` 类，并实现 `_call_api`：
+继承 `ChatModelBase`，定义内部 `Parameters` 类，并实现 `_call_api`。基类现在负责重试、流式累积与中断处理，因此 `_call_api` 只需要把提供商返回结果转换为 AgentScope 的 `ChatResponse` chunk：
 
 ```python
 from typing import Literal, Any, AsyncGenerator
@@ -307,9 +309,17 @@ class MyProviderChatModel(ChatModelBase):
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         formatted_messages = await self.formatter.format(messages)
-        # 用 self.credential.api_key 等调用提供商 API
+        # 用 self.credential.api_key 等调用提供商 API。
+        # stream=False 时返回一个 ChatResponse；stream=True 时返回
+        # 一个只产出增量 ChatResponse chunk 的 async generator。
+        # 不要在这里累积流式 chunk；ChatModelBase.__call__ 会追加
+        # 最终累积响应，并在中断时标记 finished_reason。
         ...
 ```
+
+<Info>
+对自定义 ChatModel 子类而言，直接以 `ChatResponse(content=..., is_last=False)` 产出增量返回即可。如果 `_call_api` 结束时没有产出 `is_last=True` 的最终 chunk，`ChatModelBase.__call__` 会通过 `ChatResponse.append_chat_response()` 自动累积这些增量并返回最终响应；如果流式过程被取消，则会返回带有部分累积内容且 `finished_reason=FinishedReason.INTERRUPTED` 的响应。
+</Info>
 
 #### 步骤 3：添加 Model Card（可选）
 
