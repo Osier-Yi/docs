@@ -318,7 +318,7 @@ class MyProviderChatModel(ChatModelBase):
 ```
 
 <Info>
-对自定义流式提供商而言，直接以 `ChatResponse(content=..., is_last=False)` 产出提供商增量即可。如果 `_call_api` 结束时没有产出 `is_last=True` 的最终 chunk，`ChatModelBase.__call__` 会通过 `ChatResponse.append_chat_response()` 自动累积这些增量并发出最终响应；如果流式过程被取消，则会发出带有部分累积内容且 `finished_reason=FinishedReason.INTERRUPTED` 的响应。
+对自定义 ChatModel 子类而言，直接以 `ChatResponse(content=..., is_last=False)` 产出增量返回即可。如果 `_call_api` 结束时没有产出 `is_last=True` 的最终 chunk，`ChatModelBase.__call__` 会通过 `ChatResponse.append_chat_response()` 自动累积这些增量并返回最终响应；如果流式过程被取消，则会返回带有部分累积内容且 `finished_reason=FinishedReason.INTERRUPTED` 的响应。
 </Info>
 
 #### 步骤 3：添加 Model Card（可选）
