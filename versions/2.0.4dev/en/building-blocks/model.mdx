@@ -133,7 +133,9 @@ async def __call__(
 The return type follows the model's `stream` setting:
 
 - **`stream=False`** — awaits a single `ChatResponse` carrying the full output.
-- **`stream=True`** — awaits an `AsyncGenerator[ChatResponse, None]`. Intermediate chunks (`is_last=False`) carry only the **delta** generated in that step. So that callers don't have to accumulate deltas themselves, AgentScope appends one final chunk with `is_last=True` that carries the **full accumulated content**.
+- **`stream=True`** — awaits an `AsyncGenerator[ChatResponse, None]`. Intermediate chunks (`is_last=False`) carry only the **delta** generated in that step. The final chunk (`is_last=True`) carries the **full accumulated content**. If a provider's `_call_api` only yields delta chunks, `ChatModelBase.__call__` accumulates them and appends the final chunk automatically, so callers and custom model implementations do not need to accumulate deltas themselves.
+
+If a running model call is interrupted, the model layer returns a final `ChatResponse` with the partial content accumulated so far and `finished_reason=FinishedReason.INTERRUPTED`. Normal completions use `FinishedReason.COMPLETED`.
 
 ```python
 import asyncio
@@ -169,7 +171,7 @@ Delta: [TextBlock(text='4, 5')]
 Final: [TextBlock(text='1, 2, 3, 4, 5')]
 ```
 
-Each `ChatResponse` carries content blocks (`TextBlock`, `ThinkingBlock`, `ToolCallBlock`, `DataBlock`), an `is_last` flag, and a `ChatUsage` recording token counts and elapsed time.
+Each `ChatResponse` carries content blocks (`TextBlock`, `ThinkingBlock`, `ToolCallBlock`, `DataBlock`), an `is_last` flag, a `finished_reason` (`FinishedReason.COMPLETED` or `FinishedReason.INTERRUPTED`), and a `ChatUsage` recording token counts and elapsed time.
 
 ### Generate Structured Output
 
@@ -264,7 +266,7 @@ class MyProviderCredential(CredentialBase):
 
 #### Step 2: Implement the Chat Model
 
-Subclass `ChatModelBase`, define a `Parameters` inner class, and implement `_call_api`:
+Subclass `ChatModelBase`, define a `Parameters` inner class, and implement `_call_api`. The base class now owns retry, streaming accumulation, and interruption handling, so `_call_api` only needs to translate provider responses into AgentScope `ChatResponse` chunks:
 
 ```python
 from typing import Literal, Any, AsyncGenerator
@@ -313,8 +315,16 @@ class MyProviderChatModel(ChatModelBase):
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         formatted_messages = await self.formatter.format(messages)
         # Call your provider's API using self.credential.api_key, etc.
+        # Return one ChatResponse for stream=False, or an async generator
+        # that yields delta ChatResponse chunks for stream=True.
+        # Do not accumulate streaming chunks here; ChatModelBase.__call__
+        # will append the final accumulated response and mark interruptions.
         ...
 ```
+
+<Info>
+For streaming custom providers, yield provider deltas as `ChatResponse(content=..., is_last=False)`. If `_call_api` ends without yielding a final `is_last=True` chunk, `ChatModelBase.__call__` will accumulate the deltas with `ChatResponse.append_chat_response()` and emit the final response automatically. If the stream is cancelled, it emits the partial accumulated response with `finished_reason=FinishedReason.INTERRUPTED`.
+</Info>
 
 #### Step 3: Add Model Cards (optional)
 
