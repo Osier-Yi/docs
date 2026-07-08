@@ -7,6 +7,183 @@ description: "Version history of AgentScope 2.x, including new features, changes
 For the full commit-level history and contributor list, see the [GitHub releases page](https://github.com/agentscope-ai/agentscope/releases).
 </Tip>
 
+## v2.0.4
+
+*Released on 2026-07-07.*
+
+<Note>
+**Highlight**: This release adds
+	- agent interruption,
+	- two long-term memory middlewares, and
+	- the ability to invite existing agents into a team.
+</Note>
+
+### Added
+
+**Agent Core (SDK)**
+
+- Support realtime agent interruption and resumption. ([#1995](https://github.com/agentscope-ai/agentscope/pull/1995))
+
+**Agent Service**
+
+- Add `POST /sessions/{session_id}/interrupt` endpoint. ([#1995](https://github.com/agentscope-ai/agentscope/pull/1995))
+- Support to interrupt the generation in WebUI. ([#1995](https://github.com/agentscope-ai/agentscope/pull/1995))
+- Support team leader to invite existing agents via a new `AgentInvite` tool. ([#1977](https://github.com/agentscope-ai/agentscope/pull/1977))
+- Add a session status endpoint for polling session lifecycle. ([#1984](https://github.com/agentscope-ai/agentscope/pull/1984))
+
+**Middleware — Long-term Memory**
+
+- Add `AgenticMemoryMiddleware` class, supporting Markdown-based long-term memory. ([#1927](https://github.com/agentscope-ai/agentscope/pull/1927))
+- Add `ReMeMiddleware` class, supporting the AgentScope [ReMe](https://github.com/agentscope-ai/ReMe) toolkit as an in-process long-term memory backend. ([#1972](https://github.com/agentscope-ai/agentscope/pull/1972))
+
+**RAG**
+
+- Add `MilvusLiteStore` class, supporting Milvus Lite as a local persistent vector store. ([#1969](https://github.com/agentscope-ai/agentscope/pull/1969))
+
+**TTS**
+
+- Add `DashScopeCosyVoiceTTSModel` class, supporting DashScope CosyVoice V3 speech synthesis in both streaming and non-streaming modes. ([#1866](https://github.com/agentscope-ai/agentscope/pull/1866))
+- Add `OpenAITTSModel` class, supporting the OpenAI TTS API in both streaming and non-streaming modes. ([#1878](https://github.com/agentscope-ai/agentscope/pull/1878))
+
+### Changed
+
+**Workspace**
+
+- Add a new `SandboxWorkspaceBase` class, which extracts the common logic of the cloud-based workspaces and serves as a new base class for `DockerWorkspace` and `E2BWorkspace`. ([#1971](https://github.com/agentscope-ai/agentscope/pull/1971))
+
+**Model**
+
+- The `_call_api` method of `ChatModel` subclasses no longer needs to yield a final aggregated `ChatResponse` at the end. The accumulation logic is now handled automatically inside `ChatModelBase.__call__`. ([#1995](https://github.com/agentscope-ai/agentscope/pull/1995))
+
+### Fixed
+
+**Agent**
+
+- `Agent` middleware chain: kwargs omitted in `next_handler()` now inherit the current middleware state instead of resetting to the original chain input. ([#1966](https://github.com/agentscope-ai/agentscope/pull/1966))
+- Fix the yielding order of the `ThinkingBlockEndEvent` and `TextBlockStartEvent` events. ([#1887](https://github.com/agentscope-ai/agentscope/pull/1887))
+
+**Model**
+
+- Fix the OpenAI Response API model and its formatter. ([#1950](https://github.com/agentscope-ai/agentscope/pull/1950))
+- `_sanitize_schema_for_gemini` converts `const: value` to `enum: [value]`, so tools with fixed-value parameters no longer fail Gemini schema validation. ([#2016](https://github.com/agentscope-ai/agentscope/pull/2016))
+- `ChatModelBase.count_tokens` uses a conservative flat estimate for multimodal `DataBlock` inputs, avoiding huge overestimates from base64 payload length. ([#1899](https://github.com/agentscope-ai/agentscope/pull/1899))
+
+**Formatter**
+
+- Anthropic, Gemini, and Ollama formatters now use `_json_loads_with_repair` on `ToolCallBlock.input`, so truncated tool-call JSON degrades to `{}` instead of raising `JSONDecodeError`. ([#2012](https://github.com/agentscope-ai/agentscope/pull/2012))
+- Gemini formatter drops empty thinking blocks before sending. ([#2013](https://github.com/agentscope-ai/agentscope/pull/2013))
+
+**Tool**
+
+- Built-in `Grep` rejects negative `head_limit` / `tail_limit` values. ([#1954](https://github.com/agentscope-ai/agentscope/pull/1954))
+
+**Credential**
+
+- `CredentialFactory.register_credential` is now idempotent, avoiding duplicate registrations under `uvicorn --reload`. ([#1964](https://github.com/agentscope-ai/agentscope/pull/1964))
+
+**Docs**
+
+- Fix mismatched docstrings in the `agent`, `state`, and `tool` modules. ([#1989](https://github.com/agentscope-ai/agentscope/pull/1989))
+
+## v2.0.3
+
+*Released on 2026-06-19.*
+
+<Note>
+**Highlight**: This release adds
+	- a new `rag` module with distributed / multi-tenant / multi-session support,
+	- a mem0-backed long-term memory middleware,
+	- a token-budget middleware, and
+	- tool-level onion middleware in `ToolBase`.
+</Note>
+
+### Added
+
+**Agent Core (SDK)**
+
+- `Agent.compress_context` accepts an optional `instructions: HintBlock` argument, letting callers inject compression-specific hints without mutating the agent's persistent context. ([#1942](https://github.com/agentscope-ai/agentscope/pull/1942))
+
+**Agent Service**
+
+- Expose HITL events in the team leader's session. ([#1918](https://github.com/agentscope-ai/agentscope/pull/1918))
+- Add an in-memory message bus for single-node deployment. ([#1925](https://github.com/agentscope-ai/agentscope/pull/1925))
+
+**Middleware**
+
+- Add `Mem0Middleware` class, supporting mem0-backed long-term memory. ([#1775](https://github.com/agentscope-ai/agentscope/pull/1775))
+- Add `BudgetControlMiddleware` class, supporting token-budget enforcement in ReAct loops. ([#1738](https://github.com/agentscope-ai/agentscope/pull/1738))
+
+**RAG**
+
+- Add new `rag` module, supporting distributed, multi-tenant, and multi-session RAG service. ([#1926](https://github.com/agentscope-ai/agentscope/pull/1926))
+
+**Tool**
+
+- Support tool-level onion middleware in `ToolBase` via a new `call()` entry point, wrapped by `__call__`. ([#1754](https://github.com/agentscope-ai/agentscope/pull/1754))
+
+**Workspace**
+
+- Support built-in tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`) for the e2b and docker workspaces. ([#1903](https://github.com/agentscope-ai/agentscope/pull/1903))
+
+**TTS**
+
+- Add DashScope CosyVoice realtime TTS model. ([#1855](https://github.com/agentscope-ai/agentscope/pull/1855))
+
+**Model**
+
+- Add model cards for `gpt-4o`, `gpt-4o-mini`, and `gpt-4.1-nano` under the OpenAI Response API. ([#1750](https://github.com/agentscope-ai/agentscope/pull/1750))
+
+**Embedding**
+
+- Support `pass_dimensions` option for OpenAI embedding models. ([#1897](https://github.com/agentscope-ai/agentscope/pull/1897))
+
+**Utils**
+
+- Support configurable ID factory via `set_id_factory()`, letting users override the default `uuid4` strategy. ([#1839](https://github.com/agentscope-ai/agentscope/pull/1839))
+
+**WebUI**
+
+- Render `Write` and `Edit` tool diffs. ([#1856](https://github.com/agentscope-ai/agentscope/pull/1856))
+- Add a right panel to display verbose task / permission context, MCPs, and skills. ([#1945](https://github.com/agentscope-ai/agentscope/pull/1945))
+
+### Changed
+
+**Message Bus**
+
+- Refactor and decouple the message bus from service logic. ([#1923](https://github.com/agentscope-ai/agentscope/pull/1923))
+
+### Fixed
+
+**Model**
+
+- Correct the qwen max 3.7 model id in DashScope. ([#1876](https://github.com/agentscope-ai/agentscope/pull/1876))
+- Handle Gemini function calls without an id. ([#1883](https://github.com/agentscope-ai/agentscope/pull/1883))
+- Add `_sanitize_schema_for_gemini` to strip Gemini-incompatible JSON Schema constructs from tool parameters. ([#1886](https://github.com/agentscope-ai/agentscope/pull/1886))
+
+**Formatter**
+
+- `AnthropicChatFormatter` merges parallel tool_results into a single user message. ([#1894](https://github.com/agentscope-ai/agentscope/pull/1894))
+
+**Agent**
+
+- Avoid shared default configs across `Agent` instances. ([#1906](https://github.com/agentscope-ai/agentscope/pull/1906))
+
+**Tool**
+
+- Merge base64 tool-response chunks by bytes instead of string concatenation. ([#1901](https://github.com/agentscope-ai/agentscope/pull/1901))
+
+**Middleware**
+
+- Use the configured id factory for TTS audio blocks. ([#1930](https://github.com/agentscope-ai/agentscope/pull/1930))
+
+**App**
+
+- Correctly convert AG-UI SSE stream events. ([#1917](https://github.com/agentscope-ai/agentscope/pull/1917))
+
+**Schema**
+
+- Remove `max_length` constraints from `SummarySchema` fields and raise the tool-result size limit. ([#1891](https://github.com/agentscope-ai/agentscope/pull/1891))
+
 ## v2.0.2
 
 *Released on 2026-06-16.*

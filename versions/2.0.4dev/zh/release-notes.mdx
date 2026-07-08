@@ -7,6 +7,183 @@ description: "AgentScope 版本改动和更新日志。"
 如需查看完整的提交历史与贡献者名单，请访问 [GitHub Releases 页面](https://github.com/agentscope-ai/agentscope/releases)。
 </Tip>
 
+## v2.0.4
+
+*发布于 2026-07-07。*
+
+<Note>
+**Highlight**：本次版本新增了
+	- 智能体中断能力，
+	- 两个长期记忆中间件，以及
+	- 在 Team 中邀请已有 Agent 的能力。
+</Note>
+
+### 新增
+
+**Agent 核心（SDK）**
+
+- 支持实时的智能体中断与恢复。([#1995](https://github.com/agentscope-ai/agentscope/pull/1995))
+
+**Agent Service**
+
+- 新增 `POST /sessions/{session_id}/interrupt` 端点。([#1995](https://github.com/agentscope-ai/agentscope/pull/1995))
+- 支持在 WebUI 中中断生成过程。([#1995](https://github.com/agentscope-ai/agentscope/pull/1995))
+- 支持 Team Leader 通过新增的 `AgentInvite` 工具邀请已存在的 Agent。([#1977](https://github.com/agentscope-ai/agentscope/pull/1977))
+- 新增 Session 状态查询端点，用于轮询 Session 生命周期。([#1984](https://github.com/agentscope-ai/agentscope/pull/1984))
+
+**中间件——长期记忆**
+
+- 新增 `AgenticMemoryMiddleware` 类，支持基于 Markdown 的长期记忆。([#1927](https://github.com/agentscope-ai/agentscope/pull/1927))
+- 新增 `ReMeMiddleware` 类，支持将 AgentScope [ReMe](https://github.com/agentscope-ai/ReMe) 工具箱作为进程内长期记忆后端。([#1972](https://github.com/agentscope-ai/agentscope/pull/1972))
+
+**RAG**
+
+- 新增 `MilvusLiteStore` 类，支持 Milvus Lite 作为本地持久化向量存储。([#1969](https://github.com/agentscope-ai/agentscope/pull/1969))
+
+**TTS**
+
+- 新增 `DashScopeCosyVoiceTTSModel` 类，支持 DashScope CosyVoice V3 语音合成，覆盖流式与非流式两种模式。([#1866](https://github.com/agentscope-ai/agentscope/pull/1866))
+- 新增 `OpenAITTSModel` 类，支持 OpenAI TTS API，覆盖流式与非流式两种模式。([#1878](https://github.com/agentscope-ai/agentscope/pull/1878))
+
+### 变更
+
+**Workspace**
+
+- 新增 `SandboxWorkspaceBase` 类，抽出云端工作区的通用逻辑，作为 `DockerWorkspace` 与 `E2BWorkspace` 的新基类。([#1971](https://github.com/agentscope-ai/agentscope/pull/1971))
+
+**Model**
+
+- `ChatModel` 子类的 `_call_api` 方法不再需要在最后 yield 一个包含完整结果的 `ChatResponse`，该累积逻辑被挪到 `ChatModelBase.__call__` 中自动进行。([#1995](https://github.com/agentscope-ai/agentscope/pull/1995))
+
+### 修复
+
+**Agent**
+
+- `Agent` 中间件链：`next_handler()` 中被省略的 kwargs 现在会继承当前中间件状态，而不再回退到最初的链路输入。([#1966](https://github.com/agentscope-ai/agentscope/pull/1966))
+- 修复 `ThinkingBlockEndEvent` 与 `TextBlockStartEvent` 两个事件的触发顺序。([#1887](https://github.com/agentscope-ai/agentscope/pull/1887))
+
+**Model**
+
+- 修复 OpenAI Response API 模型及其 Formatter。([#1950](https://github.com/agentscope-ai/agentscope/pull/1950))
+- `_sanitize_schema_for_gemini` 会把 `const: value` 转换为 `enum: [value]`，含固定值参数的工具不再触发 Gemini schema 校验失败。([#2016](https://github.com/agentscope-ai/agentscope/pull/2016))
+- `ChatModelBase.count_tokens` 对多模态 `DataBlock` 输入使用保守的固定估算值，避免因 base64 长度导致的严重高估。([#1899](https://github.com/agentscope-ai/agentscope/pull/1899))
+
+**Formatter**
+
+- Anthropic、Gemini、Ollama 三个 Formatter 现在在解析 `ToolCallBlock.input` 时使用 `_json_loads_with_repair`，截断的 tool-call JSON 会退化为 `{}` 而不再抛出 `JSONDecodeError`。([#2012](https://github.com/agentscope-ai/agentscope/pull/2012))
+- Gemini Formatter 会在发送前丢弃空的 thinking 块。([#2013](https://github.com/agentscope-ai/agentscope/pull/2013))
+
+**Tool**
+
+- 内置 `Grep` 拒绝 `head_limit` / `tail_limit` 的负值。([#1954](https://github.com/agentscope-ai/agentscope/pull/1954))
+
+**Credential**
+
+- `CredentialFactory.register_credential` 现在是幂等的，避免 `uvicorn --reload` 场景下的重复注册。([#1964](https://github.com/agentscope-ai/agentscope/pull/1964))
+
+**文档**
+
+- 修复 `agent`、`state`、`tool` 模块中若干错位的 docstring。([#1989](https://github.com/agentscope-ai/agentscope/pull/1989))
+
+## v2.0.3
+
+*发布于 2026-06-19。*
+
+<Note>
+**Highlight**：本次版本新增了
+	- 全新的 `rag` 模块（支持分布式、多租户、多会话），
+	- 基于 mem0 的长期记忆中间件，
+	- Token 预算控制中间件，以及
+	- `ToolBase` 中的工具级洋葱式中间件。
+</Note>
+
+### 新增
+
+**Agent 核心（SDK）**
+
+- `Agent.compress_context` 新增可选参数 `instructions: HintBlock`，允许调用方在不影响 Agent 持久上下文的前提下向压缩过程注入提示。([#1942](https://github.com/agentscope-ai/agentscope/pull/1942))
+
+**Agent Service**
+
+- 在 Team Leader 的 Session 中透出 HITL 事件。([#1918](https://github.com/agentscope-ai/agentscope/pull/1918))
+- 新增内存消息总线，支持单节点部署。([#1925](https://github.com/agentscope-ai/agentscope/pull/1925))
+
+**中间件**
+
+- 新增 `Mem0Middleware` 类，支持基于 mem0 的长期记忆。([#1775](https://github.com/agentscope-ai/agentscope/pull/1775))
+- 新增 `BudgetControlMiddleware` 类，支持 ReAct 循环中的 Token 预算控制。([#1738](https://github.com/agentscope-ai/agentscope/pull/1738))
+
+**RAG**
+
+- 新增 `rag` 模块，支持分布式、多租户、多会话的 RAG 服务。([#1926](https://github.com/agentscope-ai/agentscope/pull/1926))
+
+**Tool**
+
+- 在 `ToolBase` 中支持工具级洋葱式中间件：新增 `call()` 作为工具执行入口，`__call__` 作为中间件包装层。([#1754](https://github.com/agentscope-ai/agentscope/pull/1754))
+
+**Workspace**
+
+- e2b 与 docker 工作区支持内置工具（`Bash`、`Read`、`Write`、`Edit`、`Glob`、`Grep`）。([#1903](https://github.com/agentscope-ai/agentscope/pull/1903))
+
+**TTS**
+
+- 新增 DashScope CosyVoice 实时 TTS 模型。([#1855](https://github.com/agentscope-ai/agentscope/pull/1855))
+
+**Model**
+
+- 为 OpenAI Response API 新增 `gpt-4o`、`gpt-4o-mini`、`gpt-4.1-nano` 模型卡。([#1750](https://github.com/agentscope-ai/agentscope/pull/1750))
+
+**Embedding**
+
+- OpenAI Embedding 模型支持 `pass_dimensions` 参数。([#1897](https://github.com/agentscope-ai/agentscope/pull/1897))
+
+**Utils**
+
+- 支持通过 `set_id_factory()` 配置自定义 ID 生成策略，覆盖默认的 `uuid4`。([#1839](https://github.com/agentscope-ai/agentscope/pull/1839))
+
+**WebUI**
+
+- 渲染 `Write` 与 `Edit` 工具的 diff。([#1856](https://github.com/agentscope-ai/agentscope/pull/1856))
+- 新增右侧面板，展示详细的任务与权限上下文，以及已装载的 MCP 与 Skill。([#1945](https://github.com/agentscope-ai/agentscope/pull/1945))
+
+### 变更
+
+**Message Bus**
+
+- 重构消息总线，将其与 Service 逻辑解耦。([#1923](https://github.com/agentscope-ai/agentscope/pull/1923))
+
+### 修复
+
+**Model**
+
+- 修正 DashScope 中 qwen max 3.7 的模型 ID。([#1876](https://github.com/agentscope-ai/agentscope/pull/1876))
+- 处理不带 id 的 Gemini function call。([#1883](https://github.com/agentscope-ai/agentscope/pull/1883))
+- 新增 `_sanitize_schema_for_gemini`，用于剥离工具参数中 Gemini 不兼容的 JSON Schema 结构。([#1886](https://github.com/agentscope-ai/agentscope/pull/1886))
+
+**Formatter**
+
+- `AnthropicChatFormatter` 将并行的 tool_results 合并为单条 user 消息。([#1894](https://github.com/agentscope-ai/agentscope/pull/1894))
+
+**Agent**
+
+- 避免多个 `Agent` 实例之间共享默认配置。([#1906](https://github.com/agentscope-ai/agentscope/pull/1906))
+
+**Tool**
+
+- 按字节合并 base64 tool response chunk，替代原先的字符串拼接。([#1901](https://github.com/agentscope-ai/agentscope/pull/1901))
+
+**中间件**
+
+- TTS 音频块使用统一配置的 ID 工厂。([#1930](https://github.com/agentscope-ai/agentscope/pull/1930))
+
+**App**
+
+- 正确转换 AG-UI SSE 流式事件。([#1917](https://github.com/agentscope-ai/agentscope/pull/1917))
+
+**Schema**
+
+- 移除 `SummarySchema` 字段的 `max_length` 约束，并提高 tool result 的大小上限。([#1891](https://github.com/agentscope-ai/agentscope/pull/1891))
+
 ## v2.0.2
 
 *发布于 2026-06-16。*

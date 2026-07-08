@@ -17,10 +17,12 @@ What sets it apart:
 | Capability | Description |
 |------------|-------------|
 | Agent teams | A leader agent spawns worker agents and coordinates them through built-in team tools; see the [Agent Team](/versions/2.0.4dev/en/deploy/agent-team) chapter. |
-| Workspace management | Pluggable workspace isolation (built-in: per-agent; extensible to per-session or per-user) for the agent's filesystem, MCP clients, and skills. |
+| Workspace management | Configurable workspace isolation — `per_agent` (default), `per_session`, or `per_user` — for the agent's filesystem, MCP clients, and skills. |
+| Knowledge bases (RAG) | Optional built-in knowledge base service with document ingestion, chunking, embedding, and natural-language search — enabled by passing a `knowledge_base_manager` to `create_app`. |
 | Background task offloading | Long-running tool calls move to background; their results are delivered back through the session's event stream when they finish. |
 | Cron scheduling | Time-based agent execution with stateful or stateless sessions; schedules persist across restarts. |
 | Session replay | Late-joining clients to the per-session SSE stream receive buffered history before live events, so multiple tabs or a reconnecting frontend stay in sync. |
+| Interruption | Running or HITL-parked chat runs can be cancelled from outside via `POST /sessions/{id}/interrupt`; the agent unwinds cleanly and remains ready for the next input. |
 | Protocol adaptation | Middleware-based conversion to external protocols (AG-UI, A2A, etc.) on top of AgentScope's native event stream. |
 | Distributed deployment <Badge color="yellow" size="sm">WIP</Badge> | All shared state lives in Redis (storage + message bus), so multiple worker processes — or multiple nodes — can serve one logical service. |
 
@@ -179,13 +181,28 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 ### create_app parameters
 
 <ParamField path="storage" type="StorageBase" required>
-  The storage backend for persisting agents, sessions, credentials, messages, and schedules. Its lifecycle (`__aenter__` / `__aexit__`) is managed by the app lifespan.
+  The storage backend for persisting agents, sessions, credentials, messages, schedules, teams, and knowledge base records. Its lifecycle (`__aenter__` / `__aexit__`) is managed by the app lifespan.
 </ParamField>
 <ParamField path="message_bus" type="MessageBus" required>
   Redis-backed primitives — session locks, replay logs, inbox queues, and wakeup signals — that decouple chat triggering from event delivery. Required because every code path that delivers events to the frontend (`POST /chat`, scheduled fires, team messages, background-tool completions) goes through it, and because it is what makes multi-process deployments possible.
 </ParamField>
 <ParamField path="workspace_manager" type="WorkspaceManagerBase" required>
-  Manages workspaces (file storage, MCP servers, skills) with TTL-based caching. The built-in `LocalWorkspaceManager` isolates per agent; see [Workspace implementation and isolation](#workspace-implementation-and-isolation) for other strategies.
+  Manages workspaces (file storage, MCP clients, skills) with TTL-based caching. The built-in `LocalWorkspaceManager` supports three built-in isolation grains (`per_agent`, `per_session`, `per_user`); see [Workspace implementation and isolation](#workspace-implementation-and-isolation) for details.
+</ParamField>
+<ParamField path="knowledge_base_manager" type="KnowledgeBaseManagerBase | None" default="None">
+  Manager that owns the knowledge base lifecycle and serves `KnowledgeBase` runtime handles to both HTTP endpoints and agent code. The manager carries its own vector store instance — its `__aenter__` / `__aexit__` enter and release it. Passing `None` disables every `/knowledge_bases` endpoint.
+</ParamField>
+<ParamField path="knowledge_parsers" type="list[ParserBase] | dict[str, ParserBase] | None" default="None">
+  Parsers registered for knowledge base document uploads. Pass a **list** to have the service route by each parser's `supported_media_types` (later entries override earlier ones for overlapping types, with a warning); pass a **dict** `media_type → parser` for explicit routing. Defaults to `[TextParser()]` when `knowledge_base_manager` is set.
+</ParamField>
+<ParamField path="knowledge_chunker" type="ChunkerBase | None" default="None">
+  The chunker shared across every knowledge base. Defaults to `ApproxTokenChunker()` when `knowledge_base_manager` is set.
+</ParamField>
+<ParamField path="blob_store" type="BlobStoreBase | None" default="None">
+  Backend that stores uploaded document bytes between the upload endpoint and the indexing worker. Required when `knowledge_base_manager` is set; defaults to `LocalBlobStore(root_dir="./blobs")`. Its lifecycle is managed by the app lifespan.
+</ParamField>
+<ParamField path="enable_index_worker" type="bool" default="True">
+  When `True` (embedded deployment) the API process starts an `IndexWorker` and `IndexSweeper` in its lifespan and dispatches indexing tasks via an in-process queue. When `False` (dedicated deployment) the API process performs no indexing — a separate worker process is expected to consume tasks from the message bus. No effect when `knowledge_base_manager` is `None`.
 </ParamField>
 <ParamField path="extra_credentials" type="list[Type[CredentialBase]] | None" default="None">
   Additional credential types to register. Each class is registered with `CredentialFactory` before the app starts.
@@ -199,14 +216,17 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 <ParamField path="extra_agent_tools" type="AgentToolFactory | None" default="None">
   Async factory `(user_id, agent_id, session_id) -> Awaitable[list[ToolBase]]` invoked once per agent assembly. Returned tools are merged into the toolkit's `"basic"` group alongside the workspace-derived tools, so tool availability can vary per caller (per-tenant integrations, user-specific credentials).
 </ParamField>
-<ParamField path="sub_agent_templates" type="list[SubAgentTemplate] | None" default="None">
+<ParamField path="custom_subagent_templates" type="list[SubAgentTemplate] | None" default="None">
   Reusable blueprints for sub-agent creation within teams. Each template defines a sub-agent *type* (e.g. `"researcher"`, `"coder"`) with pre-configured system prompt, permission context, and task context. When registered, the `AgentCreate` tool exposes a `subagent_type` parameter so the leader agent can route to the appropriate template. See [Custom sub-agent types](/versions/2.0.4dev/en/deploy/agent-team#custom-sub-agent-types) for details.
+</ParamField>
+<ParamField path="custom_agent_cls" type="Type[Agent] | None" default="None">
+  A custom `Agent` subclass to instantiate on every chat turn instead of the built-in `Agent`. Use this to swap in an agent implementation with different reasoning behaviour while keeping the rest of the service unchanged.
 </ParamField>
 <ParamField path="title" type="str" default="AgentScope">
   OpenAPI title shown in the docs UI.
 </ParamField>
-<ParamField path="version" type="str" default="2.0.0">
-  API version shown in the docs UI.
+<ParamField path="version" type="str" default="package version">
+  API version shown in the docs UI. Defaults to the installed AgentScope package version.
 </ParamField>
 
 <Warning>
@@ -288,6 +308,13 @@ For a **scheduled run**, complete steps 1 and 2, then create a schedule that tar
 POST /schedule
 ```
 
+To **interrupt** a running or HITL-parked chat run at any time, post to the session's interrupt endpoint. The agent unwinds cleanly and stays ready for the next `/chat` call.
+
+```bash
+curl -X POST -H "X-User-ID: alice" \
+  "http://localhost:8000/sessions/session-xxx/interrupt?agent_id=agent-xxx"
+```
+
 ## Resource Model
 
 Every operation in Agent Service is scoped to a `user_id` resolved from the request. Below that boundary, the service manages seven resource types — six persisted (left half of the diagram) plus the message bus that ties their runtime behavior together (right half):
@@ -334,17 +361,24 @@ The service exposes the resources from the resource model as REST endpoints, plu
 
 | Category | Endpoints | Description |
 |----------|-----------|-------------|
-| Chat | `POST /chat` | Fire a chat run for a session; returns `ChatTriggerResponse` JSON. Events are delivered out-of-band on the per-session stream. |
+| Chat | `POST /chat` | Fire a chat run for a session; returns `ChatTriggerResponse` JSON. Accepts a new `Msg`, a `list[Msg]`, a `UserConfirmResultEvent` / `ExternalExecutionResultEvent` (HITL resume), or `None` (continue). Events are delivered out-of-band on the per-session stream. |
 | Session stream | `GET /sessions/{id}/stream` | Per-session SSE stream of `AgentEvent` objects, with buffered replay for late joiners and multi-subscriber fan-out. |
+| Session control | `POST /sessions/{id}/interrupt`, `GET /sessions/{id}/status` | Interrupt a running or HITL-parked chat run; probe the unified session status (running / parked / idle / gone). |
 | Sessions | `GET/POST/PATCH/DELETE /sessions` | Create and manage chat sessions, including model binding and permission level. |
-| Messages | `GET /sessions/{id}/messages` | Paginated message transcript for a session. |
+| Messages | `GET /sessions/{id}/messages` | Paginated message transcript for a session (`offset`, `limit`). |
 | Agents | `GET/POST/PATCH/DELETE /agent` | Manage agent records — display name, system prompt, runtime config. |
+| Agent schema | `GET /agent/schema/v2` | Full `AgentData` JSON Schema for rendering the agent form on the frontend. (`GET /agent/schema` remains for legacy clients but is deprecated.) |
 | Credentials | `GET/POST/PATCH/DELETE /credential` | CRUD for per-provider API keys and connection configs. |
 | Credential schemas | `GET /credential/schemas` | Discover all registered credential types and their JSON parameter schemas for form rendering. |
-| Models | `GET /model?provider=<name>` | List candidate models for a provider, with their declarative `ModelCard` (capabilities and parameter schemas). |
+| Models | `GET /model?provider=<name>` | List candidate chat models for a provider, with their declarative `ModelCard` (capabilities and parameter schemas). |
+| TTS models | `GET /tts-model?provider=<name>` | List candidate text-to-speech models for a provider that exposes them. |
 | Schedules | `GET/POST/PATCH/DELETE /schedule`, `GET /schedule/{id}/sessions` | Manage cron-based agent execution, stateful or stateless. |
-| Workspace MCPs | `GET/POST /workspace/mcp`, `DELETE /workspace/mcp/{mcp_name}` | Manage MCP clients attached to the session's workspace. |
+| Workspace MCPs | `GET/POST /workspace/mcp`, `DELETE /workspace/mcp/{mcp_name}` | Manage MCP clients attached to the session's workspace. Each response entry includes live tool list and health status. |
 | Workspace skills | `GET/POST /workspace/skill`, `DELETE /workspace/skill/{skill_name}` | Manage skills available in the session's workspace. |
+| Knowledge bases | `GET/POST/PATCH/DELETE /knowledge_bases` | CRUD for knowledge bases. Enabled only when `knowledge_base_manager` is passed to `create_app`. |
+| KB documents | `GET/POST /knowledge_bases/{id}/documents`, `GET /knowledge_bases/{id}/documents/status`, `DELETE /knowledge_bases/{id}/documents/{doc_id}` | Upload, list, delete documents in a knowledge base and batch-query indexing status. |
+| KB search | `POST /knowledge_bases/{id}/search` | Natural-language search over a knowledge base. |
+| KB discovery | `GET /knowledge_bases/embedding_models`, `GET /knowledge_bases/supported_content_types`, `GET /knowledge_bases/middleware/parameters_schema` | Discover compatible embedding models, ingestable file types, and the KB middleware's tunable parameter schema for form rendering. |
 
 ## Customization
 
@@ -358,7 +392,8 @@ AgentScope ships with `AGUIProtocolMiddleware` for the [AG-UI](https://docs.ag-u
 
 ```python
 from fastapi.middleware import Middleware
-from agentscope.app import create_app, AGUIProtocolMiddleware
+from agentscope.app import create_app
+from agentscope.app.middleware import AGUIProtocolMiddleware
 
 app = create_app(
     storage=storage,
@@ -371,7 +406,7 @@ app = create_app(
 To add a new protocol, subclass `ProtocolMiddlewareBase` and implement `_convert_to_protocol`:
 
 ```python
-from agentscope.app import ProtocolMiddlewareBase
+from agentscope.app.middleware import ProtocolMiddlewareBase
 from agentscope.event import AgentEvent
 
 class MyProtocolMiddleware(ProtocolMiddlewareBase):
@@ -443,7 +478,7 @@ from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.workspace import WorkspaceBase
 
 
-class PerSessionWorkspaceManager(WorkspaceManagerBase):
+class CustomWorkspaceManager(WorkspaceManagerBase):
     async def get_workspace(
         self,
         user_id: str,
@@ -451,19 +486,10 @@ class PerSessionWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         workspace_id: str,
     ) -> WorkspaceBase:
-        # Resolve an initialized workspace; key by session_id for per-session isolation.
+        # Resolve an initialized workspace using your own keying strategy.
         ...
 
-    async def create_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> WorkspaceBase:
-        # Allocate a fresh workspace and register it in the cache.
-        ...
-
-    async def close(self, workspace_id: str) -> None:
+	async def close(self, workspace_id: str) -> None:
         # Close and evict a single workspace.
         ...
 
@@ -556,7 +582,7 @@ To add a new model under an existing provider, drop a YAML file alongside the ot
 
 ### Storage backend
 
-The `StorageBase` abstract class defines the persistence contract for agents, sessions, credentials, messages, and schedules. AgentScope ships with `RedisStorage` as the built-in implementation:
+The `StorageBase` abstract class defines the persistence contract for agents, sessions, credentials, messages, schedules, teams, and knowledge base records. AgentScope ships with `RedisStorage` as the built-in implementation:
 
 ```python
 from agentscope.app.storage import RedisStorage
@@ -585,7 +611,8 @@ class PostgresStorage(StorageBase):
         ...
 
     # Implement CRUD methods for each record type:
-    # agents, sessions, credentials, messages, schedules, teams.
+    # agents, sessions, credentials, messages, schedules, teams,
+    # knowledge bases, knowledge documents.
     ...
 
 app = create_app(
@@ -599,11 +626,13 @@ The records the storage layer manages:
 
 | Record | Description |
 |--------|-------------|
-| `AgentRecord` | Agent configuration (name, system prompt, context config, react config). |
+| `AgentRecord` | Agent configuration (name, system prompt, context config, react config, invite config). |
 | `SessionRecord` | Session state including `AgentState`, model config, and workspace binding. |
 | `CredentialRecord` | Encrypted model provider API keys. |
 | `ScheduleRecord` | Cron schedule definitions with execution history. |
 | `TeamRecord` | Team identity, leader binding, and worker member list. |
+| `KnowledgeBaseRecord` | Knowledge base identity, embedding-model binding, and middleware parameters. Only used when the KB feature is enabled. |
+| `KnowledgeDocumentRecord` | Per-document metadata and indexing status for KB uploads. Only used when the KB feature is enabled. |
 | `Msg` | Persisted messages per session with pagination support. |
 
 ## Service Internals
@@ -655,7 +684,7 @@ flowchart TB
 
 ### Lifespan
 
-The lifespan context manager runs once per process. Built with `AsyncExitStack`, it enters resources in order — storage → message bus → workspace manager → background task manager → scheduler manager → chat service → wakeup dispatcher — and tears them down in reverse on shutdown. If any startup step raises, every previously-entered resource is still cleaned up. The scheduler restores persisted cron jobs on entry so they survive restarts.
+The lifespan context manager runs once per process. Built with `AsyncExitStack`, it enters resources in order — storage → message bus → workspace manager → optional blob store & knowledge base manager → background task manager → scheduler manager → chat run registry → chat / session / knowledge base services → optional index worker & sweeper → wakeup dispatcher — and tears them down in reverse on shutdown. If any startup step raises, every previously-entered resource is still cleaned up. The scheduler restores persisted cron jobs on entry so they survive restarts.
 
 ### Managers
 
@@ -666,9 +695,13 @@ The following resources are bound to the FastAPI app state during the lifespan a
 | `MessageBus` | Redis-backed primitives (session locks + replay log, inbox queues, wakeup signals). The single delivery channel for scheduled fires, team messages, and background-tool completions to reach idle sessions; also what enables multi-process operation. |
 | `WakeupDispatcher` | One per process. Subscribes to the wakeup signal and, for each enqueued wakeup, drives `ChatService.run` for the target session. |
 | `BackgroundTaskManager` | Pure asyncio task registry. `ToolOffloadMiddleware` spawns watcher tasks here; results are pushed back through the message bus (inbox + wakeup), not held in this manager. |
+| `ChatRunRegistry` | Per-process registry that enforces the single-run-per-session rule for `POST /chat`. A double-submit surfaces as HTTP 409. |
 | `SchedulerManager` | APScheduler-backed cron execution. On fire, the trigger pushes a `HintBlock` to the target session's inbox and enqueues a wakeup — no direct call into `ChatService`. |
-| `WorkspaceManager` | Workspace lifecycle and TTL-based caching; the isolation key (per-agent, per-user, per-session) is decided by the subclass. |
-| `ChatService` | Single entry point for running a session. Loads records, assembles the toolkit, builds middlewares, takes the bus session lock, and drives the agent's reply stream. |
+| `WorkspaceManager` | Workspace lifecycle and TTL-based caching; the isolation grain (`per_agent`, `per_session`, `per_user`) is set on the manager. |
+| `ChatService` | Single entry point for running or interrupting a session. Loads records, assembles the toolkit, builds middlewares, takes the bus session lock, and drives the agent's reply stream. |
+| `SessionService` | Composes storage and the message bus for session-level operations: create / update / delete, probing the unified `SessionStatus`, and dispatching interrupts. |
+| `KnowledgeBaseService` | Optional. When a `knowledge_base_manager` is passed to `create_app`, owns the CRUD, upload, and search endpoints under `/knowledge_bases`. |
+| `IndexWorker` / `IndexSweeper` | Optional. Started in-process when `enable_index_worker=True`; consume upload tasks and reclaim orphaned blobs. Skipped when running in a dedicated worker deployment. |
 
 ### Middlewares
 
@@ -696,7 +729,15 @@ Routers receive application state through FastAPI's `Depends()`. The standard in
 | `get_workspace_manager` | The lifespan-bound `WorkspaceManager`. |
 | `get_background_task_manager` | The lifespan-bound `BackgroundTaskManager`. |
 | `get_scheduler_manager` | The lifespan-bound `SchedulerManager`. |
+| `get_chat_run_registry` | The per-process `ChatRunRegistry` that enforces single-run-per-session. |
 | `get_chat_service` | The lifespan-bound `ChatService`. |
+| `get_session_service` | The `SessionService` that composes storage and bus for session lifecycle, status probing, and interruption. |
+| `get_extra_agent_middlewares` | The optional `AgentMiddlewareFactory` passed to `create_app`. |
+| `get_extra_agent_tools` | The optional `AgentToolFactory` passed to `create_app`. |
+| `get_knowledge_base_manager` | The `KnowledgeBaseManagerBase` (raises 503 if the KB feature was not enabled). |
+| `get_knowledge_base_service` | The `KnowledgeBaseService` (raises 503 if the KB feature was not enabled). |
+| `get_blob_store` | The `BlobStoreBase` backing KB uploads (raises 503 if the KB feature was not enabled). |
+| `get_knowledge_parsers` | The parser registry configured for KB uploads (raises 503 if the KB feature was not enabled). |
 
 ## Further Reading
 
