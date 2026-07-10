@@ -7,21 +7,22 @@ description: "The execution environment that supplies tools, skills, and context
 
 A workspace is the agent's execution environment. It supplies the agent with three categories of resources — **tools** (built-in tools and MCPs), **skills**, and **context offloading** for compressed messages and oversized tool results — and owns the lifecycle of the resources living inside it (MCP server processes, dynamically added skills, offloaded files).
 
-AgentScope ships three workspace implementations — local filesystem, Docker container, and E2B cloud sandbox — plus a **workspace manager** that allocates and tracks workspaces in [Agent Service](/versions/2.0.5dev/en/deploy/agent-service) so that multi-tenant deployments can map workspaces to users, agents, or sessions without rewriting the agent code.
+AgentScope ships four workspace implementations — local filesystem, Docker container, E2B cloud sandbox, and OpenSandbox sandbox — plus a **workspace manager** that allocates and tracks workspaces in [Agent Service](/versions/2.0.5dev/en/deploy/agent-service) so that multi-tenant deployments can map workspaces to users, agents, or sessions without rewriting the agent code.
 
-For Docker and E2B, MCP servers run *inside* the isolated environment; the host reaches them through an in-workspace gateway covered in [MCP Gateway](#mcp-gateway).
+For Docker, E2B, and OpenSandbox, MCP servers run *inside* the isolated environment; the host reaches them through an in-workspace gateway covered in [MCP Gateway](#mcp-gateway).
 
 ## Use a Workspace
 
 ### Create a Workspace
 
-AgentScope ships three workspace implementations, one per execution backend:
+AgentScope ships four workspace implementations, one per execution backend:
 
 | Class | Backend |
 |-------|---------|
 | `LocalWorkspace` | Host filesystem (built-in tools run host-side) |
 | `DockerWorkspace` | Docker container via `aiodocker` |
 | `E2BWorkspace` | E2B cloud sandbox via `AsyncSandbox` |
+| `OpenSandboxWorkspace` | OpenSandbox sandbox via the `opensandbox` SDK |
 
 Each backend has its own persistence model and directory layout — pick the tab matching your target environment:
 
@@ -100,11 +101,41 @@ Each backend has its own persistence model and directory layout — pick the tab
     await workspace.initialize()
     ```
   </Tab>
+
+  <Tab title="OpenSandboxWorkspace">
+    `OpenSandboxWorkspace` targets an [OpenSandbox](https://github.com/agentscope-ai/opensandbox) deployment — the sandbox filesystem is the persistence layer, so there is no host `workdir`. Each sandbox is tagged with `workspace_id` under the `agentscope.workspace.id` metadata key; on restart the workspace filters `list_sandbox_infos(...)` by that key and resumes the matching sandbox, restoring its disk state intact.
+
+    ```
+    /workspace/        # inside the sandbox (SANDBOX_WORKDIR)
+    ├── .mcp           # registered MCP client configs (JSON array)
+    ├── data/          # offloaded multimodal payloads
+    ├── skills/        # skill subdirectories, each with SKILL.md
+    └── sessions/      # per-session context.jsonl and tool-result files
+    ```
+
+    ```python
+    from agentscope.workspace import OpenSandboxWorkspace
+
+    workspace = OpenSandboxWorkspace(
+        image="python:3.11-slim",
+        api_key="your-opensandbox-api-key",  # or use the SDK's env fallback
+        domain="your-opensandbox-domain",    # optional, for self-hosted deployments
+        protocol="http",
+        timeout_seconds=300,
+        extra_pip=["numpy", "pandas"],
+        default_mcps=[],
+        skill_paths=["./skills/web-search"],
+    )
+    await workspace.initialize()
+    ```
+
+    The gateway venv is bootstrapped inside the sandbox on first `initialize()`; `extra_pip` packages are installed into it alongside the base gateway requirements. Because the slim base image streams `apt-get` + `uv` + `pip` for several minutes on a cold start, bootstrap commands run under a longer per-command timeout — leave `request_timeout_seconds` at its default (which matches the bootstrap budget) unless you know your image is pre-provisioned.
+  </Tab>
 </Tabs>
 
 `default_mcps` and `skill_paths` are seed-time inputs — they populate a brand-new workspace on first `initialize()`. On restart the workspace restores its MCP list from the persisted `.mcp` file, so re-passing the seeds is a no-op.
 
-All three implementations share the same `WorkspaceBase` interface, so the same agent code runs against any backend. The methods fall into four roles:
+All four implementations share the same `WorkspaceBase` interface, so the same agent code runs against any backend. The methods fall into four roles:
 
 <ParamField path="initialize() / close() / reset()" type="lifecycle (developer)">
   Provision the workspace, release its resources, and clear per-session state for pool reuse. Also drives the `async with` protocol.
@@ -186,13 +217,14 @@ A manager is responsible for:
 - **Isolation policy** — the manager decides whether two requests share a workspace; the built-in managers all isolate by `agent_id`, but `WorkspaceManagerBase` is a tiny abstract class that can be subclassed for per-user or per-session policies.
 - **Cleanup** — `close(workspace_id)` evicts a single entry and `close_all()` drains the cache on app shutdown.
 
-AgentScope ships three managers, each paired with one workspace backend and all isolating per agent:
+AgentScope ships four managers, each paired with one workspace backend and all isolating per agent by default:
 
 | Class | Pairs with | Isolation key | Cache key |
 |-------|-----------|---------------|-----------|
 | `LocalWorkspaceManager` | `LocalWorkspace` | `agent_id` (workdir = `<basedir>/<agent_id>`) | `workspace_id` |
 | `DockerWorkspaceManager` | `DockerWorkspace` | `(user_id, agent_id)` (workdir = `<basedir>/<user_id>/<agent_id>`) | `workspace_id` |
 | `E2BWorkspaceManager` | `E2BWorkspace` | `agent_id` (workspace metadata, no host workdir) | `workspace_id` |
+| `OpenSandboxWorkspaceManager` | `OpenSandboxWorkspace` | `agent_id` (sandbox metadata, no host workdir) | `workspace_id` |
 
 Construct a manager and use it like a workspace allocator:
 
@@ -228,7 +260,7 @@ In the agent service, the workspace manager is bound to the FastAPI app state du
 
 ## MCP Gateway
 
-`DockerWorkspace` and `E2BWorkspace` cannot register host-side MCP clients directly — the MCP servers live inside the container or sandbox, and stdio sessions cannot cross that boundary. AgentScope solves this with an **MCP gateway**: a lightweight FastAPI process that runs *inside* the workspace, owns the upstream MCP sessions, and exposes them over a single authenticated HTTP endpoint that the host talks to.
+`DockerWorkspace`, `E2BWorkspace`, and `OpenSandboxWorkspace` cannot register host-side MCP clients directly — the MCP servers live inside the container or sandbox, and stdio sessions cannot cross that boundary. AgentScope solves this with an **MCP gateway**: a lightweight FastAPI process that runs *inside* the workspace, owns the upstream MCP sessions, and exposes them over a single authenticated HTTP endpoint that the host talks to.
 
 ```mermaid
 flowchart LR
@@ -237,7 +269,7 @@ flowchart LR
         Toolkit --> GC["GatewayMCPClient<br/>(MCPClient subclass)"]
     end
 
-    subgraph Sandbox["Container / E2B Sandbox"]
+    subgraph Sandbox["Container / Cloud Sandbox"]
         GC -- "HTTPS<br/>Bearer token" --> GW["MCP Gateway<br/>(FastAPI)"]
         GW --> MCP1["MCP Server 1 (stdio)"]
         GW --> MCP2["MCP Server 2 (http)"]
@@ -250,7 +282,11 @@ The gateway exposes a small REST surface — `GET /health`, `GET/POST/DELETE /mc
 - **`GatewayMCPClient`** — an `MCPClient` subclass whose `connect` / `close` / `list_tools` calls become HTTP requests against the gateway, so the rest of the toolkit cannot tell it apart from a local MCP client.
 - **`GatewayMCPTool`** — a `ToolBase` subclass whose `__call__` posts to `/mcps/{name}/tools/{tool}` and reconstructs the returned `ToolChunk`.
 
-This abstraction keeps the agent-side code identical across all three workspace backends — a workspace returns `MCPClient` instances from `list_mcps()` regardless of whether the upstream session lives on the host (`LocalWorkspace`) or inside an isolated environment (`DockerWorkspace` / `E2BWorkspace`).
+This abstraction keeps the agent-side code identical across every workspace backend — a workspace returns `MCPClient` instances from `list_mcps()` regardless of whether the upstream session lives on the host (`LocalWorkspace`) or inside an isolated environment (`DockerWorkspace` / `E2BWorkspace` / `OpenSandboxWorkspace`).
+
+<Note>
+The gateway is **not** published on a host-reachable network port. Each host-to-gateway call is executed *inside* the sandbox — `GatewayMCPClient` issues the request as a `curl` command run through the backend's `exec_shell`, so the gateway only ever listens on the sandbox's own loopback. Because the sandbox exposes no externally-listening service, this design avoids the attack surface an outward-facing gateway port would introduce.
+</Note>
 
 ## Further Reading
 

@@ -317,7 +317,7 @@ curl -X POST -H "X-User-ID: alice" \
 
 ## Resource Model
 
-Every operation in Agent Service is scoped to a `user_id` resolved from the request. Below that boundary, the service manages seven resource types — six persisted (left half of the diagram) plus the message bus that ties their runtime behavior together (right half):
+Every operation in Agent Service is scoped to a `user_id` resolved from the request. Below that boundary, the service manages seven resource types — six persisted (left half of the diagram) plus the message bus that ties their runtime behavior together (right half). To let credentials, agents, or knowledge bases cross this boundary between users, see [Resource Sharing](/versions/2.0.5dev/en/deploy/sharing).
 
 ```mermaid
 flowchart TB
