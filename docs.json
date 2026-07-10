@@ -49,6 +49,7 @@
                     "pages": [
                       "versions/2.0.5dev/en/deploy/agent-service",
                       "versions/2.0.5dev/en/deploy/agent-team",
+                      "versions/2.0.5dev/en/deploy/sharing",
                       "versions/2.0.5dev/en/deploy/rag",
                       "versions/2.0.5dev/en/deploy/workspace-manager",
                       {
@@ -353,6 +354,7 @@
                     "pages": [
                       "versions/2.0.5dev/zh/deploy/agent-service",
                       "versions/2.0.5dev/zh/deploy/agent-team",
+                      "versions/2.0.5dev/zh/deploy/sharing",
                       "versions/2.0.5dev/zh/deploy/rag",
                       "versions/2.0.5dev/zh/deploy/workspace-manager",
                       {

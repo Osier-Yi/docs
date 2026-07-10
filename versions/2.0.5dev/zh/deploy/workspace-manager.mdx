@@ -1,6 +1,7 @@
 ---
 title: "工作区管理"
 description: "在服务中分配、管理智能体的运行环境（Workspace）"
+tag: "NEW"
 ---
 
 **工作区管理器**（Workspace Manager）持有隔离策略，并管理智能体服务中每个智能体的 [`Workspace`](/versions/2.0.5dev/zh/building-blocks/workspace) 实例的生命周期。它是 `agentscope.workspace` 模块在服务侧的对应实现 —— 每一种 `WorkspaceBase` 子类都有一个配套的 `WorkspaceManagerBase` 的子类来负责创建、缓存与删除。
@@ -8,7 +9,7 @@ description: "在服务中分配、管理智能体的运行环境（Workspace）
 它的特点：
 
 - **可配置的隔离粒度** —— `PER_AGENT`（默认）、`PER_SESSION` 或 `PER_USER` —— 决定 workspace 在 `(user_id, agent_id, session_id)` 三个维度上如何共享或隔离，让同一套部署可以干净地服务多个租户。
-- **可插拔的沙箱后端** —— 同一份生命周期契约既可以包裹本地目录、Docker 容器、E2B 云沙箱，也可以对应 Kubernetes Pod。切换后端只需在 `create_app` 中改一行。
+- **可插拔的沙箱后端** —— 同一份生命周期契约既可以包裹本地目录、Docker 容器、E2B 云沙箱、OpenSandbox 沙箱，也可以对应 Kubernetes Pod。切换后端只需在 `create_app` 中改一行。
 
 ## 可选的实现
 
@@ -17,6 +18,7 @@ description: "在服务中分配、管理智能体的运行环境（Workspace）
 | `LocalWorkspaceManager` | 直接落在宿主目录下的裸机式 workspace。零基础设施、零沙箱化 —— 智能体直接跑在开发者的宿主文件系统上。 |
 | `DockerWorkspaceManager` | 每个 workspace 对应一个 Docker 容器，宿主目录以 bind mount 的方式挂进去做持久化。需要一个可达的 Docker daemon。 |
 | `E2BWorkspaceManager` | 通过 [E2B](https://e2b.dev) 托管的云沙箱。空闲时自动挂起，下一次访问时恢复。 |
+| `OpenSandboxWorkspaceManager` | 通过 [OpenSandbox](https://github.com/agentscope-ai/opensandbox) 托管的云沙箱。沙箱在暂停/恢复之间保留自己的文件系统；重新挂接依据沙箱 metadata 进行，因此任意服务副本都能重连。 |
 | `K8sWorkspaceManager` | 在 Kubernetes 集群上为每个 workspace 起一个 Pod + PVC。适合已经在跑其他负载的生产集群。 |
 
 <Tip>
@@ -25,7 +27,7 @@ description: "在服务中分配、管理智能体的运行环境（Workspace）
 
 ## 接入智能体服务
 
-在 `create_app` 入口处设置对应的 `WorkspaceManager` 实例即可。下面是四种内置实现的示例：
+在 `create_app` 入口处设置对应的 `WorkspaceManager` 实例即可。下面是五种内置实现的示例：
 
 <CodeGroup>
 
@@ -90,6 +92,33 @@ workspace_manager = E2BWorkspaceManager(
     # 传 `""` 时会回退去读环境变量 `E2B_API_KEY`。
     api_key="",
     # E2B 侧的沙箱 keep-alive 超时时间。
+    timeout_seconds=300,
+    ttl=3600.0,
+)
+
+app = create_app(
+    # ...existing code...
+    workspace_manager=workspace_manager,
+)
+```
+
+```python OpenSandbox
+from agentscope.app import create_app
+from agentscope.app.workspace_manager import (
+    IsolationPolicy,
+    OpenSandboxWorkspaceManager,
+)
+
+workspace_manager = OpenSandboxWorkspaceManager(
+    isolation=IsolationPolicy.PER_AGENT,
+    # 沙箱启动所用的镜像；gateway 的 venv 会在其之上引导安装。
+    image="python:3.11-slim",
+    # 传 `""` 时会让 `opensandbox` SDK 回退到基于环境变量的配置。
+    api_key="",
+    # 可选的服务端 domain，用于自托管 / 本地部署。
+    domain="",
+    protocol="http",
+    # OpenSandbox 侧的沙箱 keep-alive 超时时间。
     timeout_seconds=300,
     ttl=3600.0,
 )
@@ -166,7 +195,7 @@ async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:
 
 ### 生命周期
 
-Manager 是一个**异步上下文管理器**。应用的 `lifespan` 会在启动时进入它，在关闭时通过一个 `AsyncExitStack` 退出它，所以它所拥有的任何后台机制（例如 `DockerWorkspaceManager` / `E2BWorkspaceManager` / `K8sWorkspaceManager` 的空闲 TTL sweeper）都会与服务的其他部分同步启停：
+Manager 是一个**异步上下文管理器**。应用的 `lifespan` 会在启动时进入它，在关闭时通过一个 `AsyncExitStack` 退出它，所以它所拥有的任何后台机制（例如 `DockerWorkspaceManager` / `E2BWorkspaceManager` / `OpenSandboxWorkspaceManager` / `K8sWorkspaceManager` 的空闲 TTL sweeper）都会与服务的其他部分同步启停：
 
 ```python
 # agentscope/app/_lifespan.py（节选）
@@ -207,7 +236,7 @@ async with AsyncExitStack() as stack:
    )
    ```
 
-   `get_workspace` 是缓存命中的路径。它在 manager 内部的 `dict` 里查 `workspace_id`，刷新一下最后访问时间，就在 O(1) 内返回已初始化好的 `Workspace`。只有 miss 的时候才会抢一把 `asyncio.Lock`，把后端准备好（构建 Docker 镜像、启动 E2B 沙箱、创建 K8s Pod……），再把结果缓存起来 —— 这把锁能防止多个请求同时冲进来给同一个 id 起两份后端。
+   `get_workspace` 是缓存命中的路径。它在 manager 内部的 `dict` 里查 `workspace_id`，刷新一下最后访问时间，就在 O(1) 内返回已初始化好的 `Workspace`。只有 miss 的时候才会抢一把 `asyncio.Lock`，把后端准备好（构建 Docker 镜像、启动 E2B 或 OpenSandbox 沙箱、创建 K8s Pod……），再把结果缓存起来 —— 这把锁能防止多个请求同时冲进来给同一个 id 起两份后端。
 
 3. **空闲驱逐** —— 沙箱类的 manager 会跑一个后台 sweeper（在 `__aenter__` 里启动），周期性遍历缓存，把最后访问时间超过 `ttl` 的 workspace 关闭并踢出。下一次访问该 id 时会透明地重新准备一份。
 
@@ -328,9 +357,10 @@ class MyWorkspaceManager(WorkspaceManagerBase):
 分布式部署要用**云托管的沙箱后端**：
 
 - **`E2BWorkspaceManager`** —— 沙箱可以通过 metadata 跨节点寻址；缓存 miss 时服务直接重连已存在的沙箱即可。
+- **`OpenSandboxWorkspaceManager`** —— 沙箱携带 `agentscope.workspace.id` 这个 metadata 标签；缓存 miss 时任意服务副本都可以通过对 `list_sandbox_infos(...)` 过滤来重新挂接，完全不依赖宿主本地状态。
 - **`K8sWorkspaceManager`** —— Pod 与 PVC 都是集群级资源；集群内任意服务副本都可以按 workspace-id 派生出的名字重连到同一个 Pod。
 
 <Tip>
-本地开发用 `LocalWorkspaceManager`，单机生产用 `DockerWorkspaceManager`，一旦要横向扩容就切到 E2B 或 K8s。
+本地开发用 `LocalWorkspaceManager`，单机生产用 `DockerWorkspaceManager`，一旦要横向扩容就切到 E2B、OpenSandbox 或 K8s。
 </Tip>
 
