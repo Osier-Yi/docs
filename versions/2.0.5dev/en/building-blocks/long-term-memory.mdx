@@ -220,35 +220,62 @@ pip install "agentscope[mem0]"
 
 ### Quick start
 
-The fastest path is to pass your AgentScope chat and embedding models; the middleware builds an open-source mem0 store internally and wires both extraction and embedding through them.
+The fastest path is to pass a dedicated AgentScope chat model and an embedding model to the middleware; it builds an open-source mem0 store internally and wires both extraction and embedding through them.
 
 ```python
 import asyncio
+import os
 
 from agentscope.agent import Agent
+from agentscope.credential import DashScopeCredential
+from agentscope.embedding import DashScopeEmbeddingModel
+from agentscope.message import UserMsg
 from agentscope.middleware import Mem0Middleware
+from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
 
 
 async def main():
+    api_key = os.environ["DASHSCOPE_API_KEY"]
+
+    # Construct these as two separate chat-model objects, even though they
+    # use the same provider, model name, endpoint, and API key.
+    agent_chat_model = DashScopeChatModel(
+        credential=DashScopeCredential(api_key=api_key),
+        model="qwen3.7-max",
+        stream=False,
+    )
+    mem0_chat_model = DashScopeChatModel(
+        credential=DashScopeCredential(api_key=api_key),
+        model="qwen3.7-max",
+        stream=False,
+    )
+    embedding_model = DashScopeEmbeddingModel(
+        credential=DashScopeCredential(api_key=api_key),
+        model="text-embedding-v4",
+        dimensions=1536,
+    )
+
     mw = Mem0Middleware(
         user_id="alice",
-        chat_model=my_chat_model,
-        embedding_model=my_embedding_model,
+        chat_model=mem0_chat_model,
+        embedding_model=embedding_model,
         mode="both",
     )
 
     agent = Agent(
         name="assistant",
         system_prompt="You are a helpful assistant.",
-        model=my_chat_model,
+        model=agent_chat_model,
         toolkit=Toolkit(tools=await mw.list_tools()),
         middlewares=[mw],
     )
 
     # Memories written in this session resurface in later sessions
     # for the same ``user_id``.
-    await agent(...)
+    await agent.reply(
+        UserMsg("alice", "Remember that I prefer dark-mode charts."),
+    )
 
 
 asyncio.run(main())
@@ -272,6 +299,16 @@ The `mode` parameter decides how the agent interacts with mem0. It defaults to `
 
 `Mem0Middleware` supports three ways to wire up the mem0 backend:
 
+<Warning>
+**When you use an AgentScope chat model to construct the mem0 backend, `Agent` and `Mem0Middleware` must use separate model instances.** This requirement applies to both model-backed paths below: passing AgentScope models directly, and providing `chat_model` with a custom mem0 config. It does not apply to the pre-built client path, where `Mem0Middleware` uses the supplied mem0 client directly.
+
+The instances must be separate because AgentScope chat models use an asynchronous interface, while mem0 invokes a synchronous LLM interface during memory extraction. To bridge these interfaces, `Mem0Middleware` wraps the AgentScope model in an adapter: `Agent` invokes its model on the application's event loop, whereas the adapter runs the memory-extraction model coroutine on a dedicated bridge event loop.
+
+If the two paths share one model instance, they also share its async HTTP client and connection pool across two event loops. The pool's underlying resources may become bound to the loop where they are first used; accessing them from the other loop can then cause intermittent `Connection error` failures or `RuntimeError: ... is bound to a different event loop`. Because the failure can occur only during memory extraction, the Agent may still return a normal response even though the memory write fails or produces no new facts.
+
+The two instances may still use the same provider, model name, endpoint, and API key—the requirement is only that they are separate model/client objects. In multi-agent applications, do not share one mem0 chat-model instance across independently constructed model-backed `Mem0Middleware` instances, because each adapter may own a different bridge event loop.
+</Warning>
+
 <Tabs>
   <Tab title="AgentScope models">
   Pass AgentScope models and let the middleware build an open-source `AsyncMemory` internally (mem0's default Qdrant store). The embedding model's `dimensions` must match the vector store (the default Qdrant expects `1536`).
@@ -279,7 +316,7 @@ The `mode` parameter decides how the agent interacts with mem0. It defaults to `
 ```python
 Mem0Middleware(
     user_id="alice",
-    chat_model=my_chat_model,
+    chat_model=mem0_chat_model,
     embedding_model=my_embedding_model,
 )
 ```
@@ -290,7 +327,7 @@ Mem0Middleware(
 ```python
 Mem0Middleware(
     user_id="alice",
-    chat_model=my_chat_model,
+    chat_model=mem0_chat_model,
     embedding_model=my_embedding_model,
     mem0_config=my_mem0_config,
 )

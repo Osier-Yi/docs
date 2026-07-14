@@ -220,34 +220,61 @@ pip install "agentscope[mem0]"
 
 ### 快速开始
 
-最快捷的方式是直接传入你的 AgentScope chat 与 embedding 模型；中间件会在内部构建一个开源版 mem0 存储，并把记忆抽取与 embedding 都接到这两个模型上。
+最快捷的方式是为中间件传入一个专用的 AgentScope chat 模型和一个 embedding 模型；中间件会在内部构建一个开源版 mem0 存储，并把记忆抽取与 embedding 都接到这两个模型上。
 
 ```python
 import asyncio
+import os
 
 from agentscope.agent import Agent
+from agentscope.credential import DashScopeCredential
+from agentscope.embedding import DashScopeEmbeddingModel
+from agentscope.message import UserMsg
 from agentscope.middleware import Mem0Middleware
+from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
 
 
 async def main():
+    api_key = os.environ["DASHSCOPE_API_KEY"]
+
+    # 即使 provider、模型名称、endpoint 和 API key 相同，
+    # 也必须分别创建两个 chat 模型对象。
+    agent_chat_model = DashScopeChatModel(
+        credential=DashScopeCredential(api_key=api_key),
+        model="qwen3.7-max",
+        stream=False,
+    )
+    mem0_chat_model = DashScopeChatModel(
+        credential=DashScopeCredential(api_key=api_key),
+        model="qwen3.7-max",
+        stream=False,
+    )
+    embedding_model = DashScopeEmbeddingModel(
+        credential=DashScopeCredential(api_key=api_key),
+        model="text-embedding-v4",
+        dimensions=1536,
+    )
+
     mw = Mem0Middleware(
         user_id="alice",
-        chat_model=my_chat_model,
-        embedding_model=my_embedding_model,
+        chat_model=mem0_chat_model,
+        embedding_model=embedding_model,
         mode="both",
     )
 
     agent = Agent(
         name="assistant",
         system_prompt="You are a helpful assistant.",
-        model=my_chat_model,
+        model=agent_chat_model,
         toolkit=Toolkit(tools=await mw.list_tools()),
         middlewares=[mw],
     )
 
     # 本次会话写入的记忆，会在后续相同 ``user_id`` 的会话中重新出现。
-    await agent(...)
+    await agent.reply(
+        UserMsg("alice", "请记住：我偏好深色模式的图表。"),
+    )
 
 
 asyncio.run(main())
@@ -271,6 +298,16 @@ asyncio.run(main())
 
 `Mem0Middleware` 支持三种接入 mem0 后端的方式：
 
+<Warning>
+**使用 AgentScope chat 模型构造 mem0 后端时，`Agent` 与 `Mem0Middleware` 必须使用不同的模型实例。** 该要求适用于下面两种由模型驱动的接入方式：直接传入 AgentScope 模型，以及将 `chat_model` 与自定义 mem0 config 一起传入。预构建 client 路径不受影响，因为 `Mem0Middleware` 会直接使用传入的 mem0 client。
+
+之所以需要分离实例，是因为 AgentScope chat 模型采用异步接口，而 mem0 在记忆抽取时调用的是同步 LLM 接口。为衔接这两种接口，`Mem0Middleware` 会通过 adapter 包装 AgentScope 模型：`Agent` 在应用自身的 event loop 上调用模型，adapter 则在专用的 bridge event loop 上运行用于记忆抽取的模型协程。
+
+如果两个路径共享同一个模型实例，它们也会跨两个 event loop 共享该实例持有的异步 HTTP client 和连接池。连接池的底层资源可能绑定到首次使用它们的 loop；随后从另一个 loop 访问时，就可能间歇性触发 `Connection error` 或 `RuntimeError: ... is bound to a different event loop`。由于故障可能只发生在记忆抽取阶段，Agent 仍可能正常回复，但记忆写入会失败或没有产生新事实。
+
+两个模型实例仍然可以使用相同的 provider、模型名称、endpoint 和 API key；只需确保它们是独立的模型/client 对象。在多 Agent 应用中，也不要让多个独立构建、由模型驱动的 `Mem0Middleware` 共享同一个 mem0 chat 模型实例，因为每个 adapter 都可能拥有不同的 bridge event loop。
+</Warning>
+
 <Tabs>
   <Tab title="AgentScope 模型">
   传入 AgentScope 模型，让中间件在内部构建开源版 `AsyncMemory`（mem0 默认的 Qdrant 存储）。embedding 模型的 `dimensions` 必须与向量存储匹配（默认 Qdrant 期望 `1536`）。
@@ -278,7 +315,7 @@ asyncio.run(main())
 ```python
 Mem0Middleware(
     user_id="alice",
-    chat_model=my_chat_model,
+    chat_model=mem0_chat_model,
     embedding_model=my_embedding_model,
 )
 ```
@@ -289,7 +326,7 @@ Mem0Middleware(
 ```python
 Mem0Middleware(
     user_id="alice",
-    chat_model=my_chat_model,
+    chat_model=mem0_chat_model,
     embedding_model=my_embedding_model,
     mem0_config=my_mem0_config,
 )
