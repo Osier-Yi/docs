@@ -26,7 +26,7 @@
 ## 前置要求
 
 - 完成 Tutorial 12
-- 安装服务依赖：`pip install "agentscope[service]" fakeredis httpx`
+- 安装服务依赖：`pip install "agentscope[service]==2.0.4" fakeredis httpx`
 - Redis 服务可选；本教程默认用 `fakeredis` 跑内存模式
 - 如需体验 Web UI：Node.js 20+ 与 `pnpm`
 

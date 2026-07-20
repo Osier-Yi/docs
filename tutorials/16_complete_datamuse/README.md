@@ -31,7 +31,7 @@ T13-T15 是同一业务案例的另外两条扩展路径，不是本章必须嵌
 - 建议完成 Tutorial 01-12
 - T13-T15 可选：用于理解服务化、调度和团队化扩展
 - Python 3.12
-- 安装 AgentScope：`pip install agentscope`
+- 安装 AgentScope：`pip install agentscope==2.0.4`
 - 准备好 `tutorials/data/sales_data.csv`
 - 设置 `DASHSCOPE_API_KEY` 或 `OPENAI_API_KEY`
 

@@ -23,8 +23,10 @@
 ## 前置要求
 
 - Python 3.12
-- `pip install agentscope`
+- AgentScope 2.0.4（`pip install agentscope==2.0.4`）
 - 至少一个 LLM API Key（DashScope / OpenAI / Ollama）
+
+本教程按 AgentScope 2.0.4 编写；使用其他版本时，API 可能存在差异。
 
 ## 教程列表
 
@@ -90,7 +92,7 @@ python generate_sales_data.py
 # 准备环境
 conda create -n agentscope-tutorial-py312 python=3.12 -y
 conda activate agentscope-tutorial-py312
-pip install agentscope
+pip install agentscope==2.0.4
 
 # 设置 API Key
 export DASHSCOPE_API_KEY="your-key"
@@ -108,7 +110,7 @@ python main.py
 # 如果还没有准备环境，先执行：
 conda create -n agentscope-tutorial-py312 python=3.12 -y
 conda activate agentscope-tutorial-py312
-pip install agentscope
+pip install agentscope==2.0.4
 export DASHSCOPE_API_KEY="your-key"
 
 cd tutorials/16_complete_datamuse

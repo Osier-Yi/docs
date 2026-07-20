@@ -21,7 +21,7 @@
 
 - 完成 Tutorial 13
 - Agent Service 正常运行
-- `pip install "agentscope[service]" fakeredis httpx`
+- `pip install "agentscope[service]==2.0.4" fakeredis httpx`
 
 ## 核心概念
 

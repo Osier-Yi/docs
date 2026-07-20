@@ -12,7 +12,7 @@
 ## 前置要求
 
 - Python 3.11+
-- 安装 AgentScope：`pip install agentscope`
+- 安装 AgentScope：`pip install agentscope==2.0.4`
 - 至少一个 LLM API Key（DashScope / OpenAI / Ollama 等）
 
 ## 核心概念
