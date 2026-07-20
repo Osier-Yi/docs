@@ -7,10 +7,16 @@ DataMuse 销售分析应用。
 
 ## 环境准备
 
-在本仓库中运行示例时使用 Python 3.12 环境：
+本文固定使用以下环境，避免 Python 或 AgentScope 版本差异影响示例：
+
+- Python 3.12
+- AgentScope 2.0.4
+- Node.js 20+（通过 `npx` 启动示例中的 MCP Server）
 
 ```bash
+conda create -n agentscope-tutorial-py312 python=3.12 -y
 conda activate agentscope-tutorial-py312
+pip install "agentscope[service]==2.0.4"
 export DASHSCOPE_API_KEY="your-api-key"
 ```
 
@@ -52,14 +58,14 @@ flowchart LR
 |---|---|---|---|
 | Credential | `agentscope.credential` | 保存并校验模型凭证 | 接入任意外部模型或语音服务时 |
 | Model | `agentscope.model` | 调用 LLM，返回统一响应 | 所有 Agent 应用 |
-| Formatter | `agentscope.formatter` | 在 AgentScope `Msg` 与供应商消息格式间转换 | 自定义模型协议或多 Agent 消息格式时 |
+| Formatter | `agentscope.formatter` | 在 AgentScope `Msg` 与供应商消息格式间转换 | 一个对话中存在多个实体（Agent 或用户）时 |
 | Message | `agentscope.message` | 表示用户、助手、系统消息及多模态内容块 | 所有输入、上下文和最终输出 |
 | Event | `agentscope.event` | 暴露推理、文本、工具、审批等增量事件 | 流式 UI、服务端 SSE、HITL |
 | Agent | `agentscope.agent` | 执行 reasoning-acting 循环 | 所有 Agent 应用 |
 | State | `agentscope.state` | 保存会话、上下文、权限、任务和 middleware 状态 | 多轮对话、恢复执行、持久化 |
 | Tool | `agentscope.tool` | 把 Python 或系统能力暴露给 Agent | Agent 需要读取、计算或执行操作时 |
-| MCP | `agentscope.mcp` | 连接标准化外部工具服务器 | 能力由独立服务提供或需要跨框架复用时 |
-| Skill | `agentscope.skill` | 按需加载可复用的操作指南 | 流程复杂但不需要新增可执行接口时 |
+| MCP | `agentscope.mcp` | 连接标准化外部工具服务器 | 需要接入 MCP Server 提供的工具或服务时 |
+| Skill | `agentscope.skill` | 按需加载可复用的操作指南 | 需要按 Skill 中的规则、顺序或 SOP 组合工具时 |
 | Permission | `agentscope.permission` | 对每次工具调用做 ALLOW、ASK 或 DENY 决策 | Agent 能产生真实副作用时 |
 | Middleware | `agentscope.middleware` | 横切扩展 Agent 生命周期 | tracing、RAG、记忆、预算、TTS、审计 |
 | Workspace | `agentscope.workspace` | 提供隔离工作目录、工具、MCP、Skill 和 Offloader | 文件操作、沙箱执行、服务化隔离 |
@@ -368,8 +374,8 @@ toolkit = Toolkit(
 
 ### 是什么
 
-MCP 把外部工具服务器转换成 AgentScope Tool。它适合连接文件系统、数据库、
-浏览器或其他独立服务，并保持能力协议与 Agent 实现解耦。
+MCP 把外部工具服务器转换成 AgentScope Tool。它适合连接数据库、浏览器、
+知识图谱或其他独立服务，并保持能力协议与 Agent 实现解耦。
 
 ### 什么时候用
 
@@ -386,26 +392,33 @@ from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.tool import Toolkit
 
 
-filesystem = MCPClient(
-    name="filesystem",
+memory = MCPClient(
+    name="memory",
     is_stateful=True,
     mcp_config=StdioMCPConfig(
         command="npx",
         args=[
             "-y",
-            "@modelcontextprotocol/server-filesystem",
-            "/absolute/path/to/data",
+            "@modelcontextprotocol/server-memory",
         ],
     ),
-    enable_tools=["list_directory", "read_file"],
+    enable_tools=[
+        "create_entities",
+        "add_observations",
+        "search_nodes",
+    ],
 )
 
-await filesystem.connect()
+await memory.connect()
 try:
-    toolkit = Toolkit(mcps=[filesystem])
+    toolkit = Toolkit(mcps=[memory])
 finally:
-    await filesystem.close()
+    await memory.close()
 ```
+
+这里使用 Memory MCP 来保存和检索结构化信息。在后面的 Workspace 场景中，
+`basic` 工具已经提供 `Read`、`Write`、`Edit`、`Glob` 和 `Grep`，因此不再额外
+接入功能重复的 filesystem MCP。
 
 HTTP MCP 使用 `HttpMCPConfig(url=..., headers=...)`。MCP 工具名会被命名空间化为
 `mcp__{server_name}__{tool_name}`，避免不同 Server 的同名工具冲突。
@@ -699,7 +712,7 @@ from agentscope.workspace import LocalWorkspace
 
 async with LocalWorkspace(
     workdir="./workspace",
-    default_mcps=[filesystem_mcp],
+    default_mcps=[memory_mcp],
     skill_paths=["./skills/report_writer"],
 ) as workspace:
     workspace_tools = await workspace.list_tools()
@@ -879,7 +892,7 @@ app = create_app(
     message_bus=RedisMessageBus(host="localhost", port=6379),
     workspace_manager=LocalWorkspaceManager(
         basedir="./workspaces",
-        default_mcps=[filesystem_mcp],
+        default_mcps=[memory_mcp],
         skill_paths=["./skills/report_writer"],
     ),
     extra_agent_tools=tool_factory,
@@ -1091,20 +1104,25 @@ SALES_CSV = DATA_DIR / "sales_data.csv"
 SKILL_DIR = ROOT / "skills" / "report_writer"
 WORKSPACE_DIR = ROOT / "workspace"
 REPORTS_DIR = WORKSPACE_DIR / "reports"
+MEMORY_FILE = WORKSPACE_DIR / "memory.jsonl"
 
 
-filesystem_mcp = MCPClient(
-    name="filesystem",
+memory_mcp = MCPClient(
+    name="memory",
     is_stateful=True,
     mcp_config=StdioMCPConfig(
         command="npx",
         args=[
             "-y",
-            "@modelcontextprotocol/server-filesystem",
-            str(DATA_DIR),
+            "@modelcontextprotocol/server-memory",
         ],
+        env={"MEMORY_FILE_PATH": str(MEMORY_FILE)},
     ),
-    enable_tools=["list_directory", "read_file"],
+    enable_tools=[
+        "create_entities",
+        "add_observations",
+        "search_nodes",
+    ],
 )
 
 
@@ -1267,7 +1285,7 @@ async def main() -> None:
 
     async with LocalWorkspace(
         workdir=str(WORKSPACE_DIR),
-        default_mcps=[filesystem_mcp],
+        default_mcps=[memory_mcp],
         skill_paths=[str(SKILL_DIR)],
     ) as workspace:
         workspace_tools = await workspace.list_tools()
@@ -1279,7 +1297,9 @@ async def main() -> None:
             name="DataMuse",
             system_prompt=(
                 "You are DataMuse, a careful sales analyst. "
-                "First inspect the data directory with filesystem MCP. "
+                "Search the memory MCP for reporting preferences before "
+                "analysis, and store any new preference the user asks you "
+                "to remember. "
                 "Use SalesSummary for every numeric claim. Before writing, "
                 "load report_writer with the Skill tool, then call "
                 "WriteReport. Mention the saved path in the final answer.\n"
@@ -1313,8 +1333,9 @@ async def main() -> None:
         task = UserMsg(
             name="user",
             content=(
-                "Inspect the data directory, compare revenue by category "
-                "and region, then write datamuse_report.md."
+                "Remember that my reports should lead with category "
+                "performance. Compare revenue by category and region, "
+                "then write datamuse_report.md."
             ),
         )
         await process_events(agent, agent.reply_stream(task))
@@ -1332,9 +1353,9 @@ cd datamuse_demo
 python main.py
 ```
 
-首次运行 filesystem MCP 时，`npx` 可能需要下载对应 Server 包。运行过程中
-`SalesSummary` 会直接执行；`WriteReport` 会产生确认事件，批准后才会在
-`workspace/reports/` 写入 Markdown 文件。
+首次运行 Memory MCP 时，`npx` 可能需要下载对应 Server 包。运行过程中，
+DataMuse 会通过 MCP 保存报告偏好，`SalesSummary` 会计算指标；`WriteReport`
+会产生确认事件，批准后才会在 `workspace/reports/` 写入 Markdown 文件。
 
 ### 将同一组能力装入 Agent Service
 
@@ -1352,23 +1373,28 @@ from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig
 
-from main import DATA_DIR, SKILL_DIR, SalesSummary, WriteReport
+from main import SKILL_DIR, SalesSummary, WriteReport
 
 
 SERVICE_WORKSPACES = Path("./service_workspaces").resolve()
+SERVICE_MEMORY_FILE = SERVICE_WORKSPACES / "memory.jsonl"
 
-filesystem_mcp = MCPClient(
-    name="filesystem",
+memory_mcp = MCPClient(
+    name="memory",
     is_stateful=True,
     mcp_config=StdioMCPConfig(
         command="npx",
         args=[
             "-y",
-            "@modelcontextprotocol/server-filesystem",
-            str(DATA_DIR),
+            "@modelcontextprotocol/server-memory",
         ],
+        env={"MEMORY_FILE_PATH": str(SERVICE_MEMORY_FILE)},
     ),
-    enable_tools=["list_directory", "read_file"],
+    enable_tools=[
+        "create_entities",
+        "add_observations",
+        "search_nodes",
+    ],
 )
 
 
@@ -1383,7 +1409,7 @@ app = create_app(
     message_bus=RedisMessageBus(host="localhost", port=6379),
     workspace_manager=LocalWorkspaceManager(
         basedir=str(SERVICE_WORKSPACES),
-        default_mcps=[filesystem_mcp],
+        default_mcps=[memory_mcp],
         skill_paths=[str(SKILL_DIR)],
     ),
     extra_agent_tools=datamuse_tools,
